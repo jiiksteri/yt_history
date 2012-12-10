@@ -59,7 +59,8 @@ int main(int argc, char **argv)
 	struct event_base *base;
 	struct evhttp *http;
 	struct evhttp_bound_socket *sock;
-	int opt, port = 0;
+	struct auth_engine *auth;
+	int opt, err, port = 0;
 
 	while ((opt = getopt(argc, argv, "p:")) != -1) {
 		switch (opt) {
@@ -90,12 +91,23 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
+	/* If we had port=0, it's now allocated by bind() */
+	port = lport(sock);
+
+	if ((err = auth_init(&auth, port)) != 0) {
+		fprintf(stderr, "auth_init(): %s\n", strerror(err));
+		evhttp_free(http);
+		event_base_free(base);
+		return err;
+	}
+
 	printf("http://localhost:%d/\n", lport(sock));
 
 	evhttp_set_gencb(http, handle_request, NULL);
 
 	event_base_dispatch(base);
 
+	auth_destroy(auth);
 	evhttp_free(http);
 	event_base_free(base);
 

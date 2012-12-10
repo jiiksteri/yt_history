@@ -1,6 +1,6 @@
 PROG = yt_history
 
-OBJS = auth.o main.o
+OBJS = conf.o auth.o main.o
 
 CFLAGS = -Wall $(shell pkg-config --cflags libevent)
 LDFLAGS = $(shell pkg-config --libs libevent)
