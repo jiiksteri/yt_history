@@ -29,6 +29,12 @@ void auth_dispatch(struct auth_engine *auth, struct evhttp_request *req)
 }
 
 
+void auth_cb(struct auth_engine *auth, struct evhttp_request *req)
+{
+	evhttp_send_error(req, HTTP_NOTIMPLEMENTED, "TBD: Handle auth callback");
+}
+
+
 
 int auth_init(struct auth_engine **authp, int local_port)
 {

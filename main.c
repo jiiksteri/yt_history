@@ -6,12 +6,45 @@
 
 #include <event2/event.h>
 #include <event2/http.h>
+#include <event2/keyvalq_struct.h>
 
 #include "auth.h"
 
 struct app {
 	struct auth_engine *auth;
 };
+
+static int is_auth_cb(const char *uri_str)
+{
+	struct evhttp_uri *uri;
+	struct evkeyvalq params;
+	const char *state;
+	int is_auth;
+
+	/* I wonder how memory management for
+	 * all these things extracted from uri should be handled.
+	 *
+	 * Peeking at the source evkeyvalq is a standard queue, and
+	 * header parsing has suitable accessors for it so..
+	 *
+	 * Anyway, this should live in auth.c somewhere. auth_check() which
+	 * would then internally either auth_dispatch() or auth_cb()?
+	 */
+	memset(&params, 0, sizeof(params));
+
+	uri = evhttp_uri_parse(uri_str);
+
+	/* Does the query need to be freed separately? */
+	evhttp_parse_query_str(evhttp_uri_get_query(uri), &params);
+
+	state = evhttp_find_header(&params, "state");
+	is_auth = (state != NULL) && (strcmp(state, "auth") == 0);
+
+	evhttp_clear_headers(&params);
+	evhttp_uri_free(uri);
+
+	return is_auth;
+}
 
 static void handle_request(struct evhttp_request *req, void *_app)
 {
@@ -24,6 +57,8 @@ static void handle_request(struct evhttp_request *req, void *_app)
 
 	if (strcmp(uri, "/") == 0) {
 		auth_dispatch(app->auth, req);
+	} else if (is_auth_cb(uri)) {
+		auth_cb(app->auth, req);
 	} else {
 		evhttp_send_error(req, HTTP_NOTFOUND, NULL);
 	}

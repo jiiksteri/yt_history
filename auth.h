@@ -10,5 +10,6 @@ int auth_init(struct auth_engine **authp, int local_port);
 void auth_destroy(struct auth_engine *auth);
 
 void auth_dispatch(struct auth_engine *auth, struct evhttp_request *req);
+void auth_cb(struct auth_engine *auth, struct evhttp_request *req);
 
 #endif
