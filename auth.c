@@ -5,6 +5,7 @@
 #include <errno.h>
 
 #include <event2/http.h>
+#include <event2/buffer.h>
 
 #include "conf.h"
 
@@ -14,10 +15,17 @@ struct auth_engine {
 
 
 
-void auth_dispatch(struct evhttp_request *req)
+void auth_dispatch(struct auth_engine *auth, struct evhttp_request *req)
 {
-	/* TODO: Send the user googlewards. */
-	evhttp_send_error(req, HTTP_NOTIMPLEMENTED, "TBD: Redirect to google auth");
+	struct evbuffer *buf;
+
+	evhttp_add_header(evhttp_request_get_output_headers(req),
+			  "Location", auth->auth_url);
+
+	buf = evbuffer_new();
+	evbuffer_add_printf(buf, "Please authenticate");
+	evhttp_send_reply(req, HTTP_MOVETEMP, "Please authenticate", buf);
+	evbuffer_free(buf);
 }
 
 

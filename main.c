@@ -9,8 +9,13 @@
 
 #include "auth.h"
 
-static void handle_request(struct evhttp_request *req, void *arg)
+struct app {
+	struct auth_engine *auth;
+};
+
+static void handle_request(struct evhttp_request *req, void *_app)
 {
+	struct app *app = _app;
 	const char *uri;
 
 	uri = evhttp_request_get_uri(req);
@@ -18,7 +23,7 @@ static void handle_request(struct evhttp_request *req, void *arg)
 	printf("%s(): %s\n", __func__, uri);
 
 	if (strcmp(uri, "/") == 0) {
-		auth_dispatch(req);
+		auth_dispatch(app->auth, req);
 	} else {
 		evhttp_send_error(req, HTTP_NOTFOUND, NULL);
 	}
@@ -56,10 +61,10 @@ static int lport(struct evhttp_bound_socket *sock)
 
 int main(int argc, char **argv)
 {
+	struct app app;
 	struct event_base *base;
 	struct evhttp *http;
 	struct evhttp_bound_socket *sock;
-	struct auth_engine *auth;
 	int opt, err, port = 0;
 
 	while ((opt = getopt(argc, argv, "p:")) != -1) {
@@ -94,7 +99,7 @@ int main(int argc, char **argv)
 	/* If we had port=0, it's now allocated by bind() */
 	port = lport(sock);
 
-	if ((err = auth_init(&auth, port)) != 0) {
+	if ((err = auth_init(&app.auth, port)) != 0) {
 		fprintf(stderr, "auth_init(): %s\n", strerror(err));
 		evhttp_free(http);
 		event_base_free(base);
@@ -103,11 +108,11 @@ int main(int argc, char **argv)
 
 	printf("http://localhost:%d/\n", lport(sock));
 
-	evhttp_set_gencb(http, handle_request, NULL);
+	evhttp_set_gencb(http, handle_request, &app);
 
 	event_base_dispatch(base);
 
-	auth_destroy(auth);
+	auth_destroy(app.auth);
 	evhttp_free(http);
 	event_base_free(base);
 
