@@ -3,6 +3,7 @@
 #include <unistd.h>
 #include <stdio.h>
 #include <string.h>
+#include <signal.h>
 
 #include <event2/event.h>
 #include <event2/http.h>
@@ -94,12 +95,18 @@ static int lport(struct evhttp_bound_socket *sock)
 	return port;
 }
 
+static void interrupted(evutil_socket_t fd, short events, void *base)
+{
+	event_base_loopexit(base, NULL);
+}
+
 int main(int argc, char **argv)
 {
 	struct app app;
 	struct event_base *base;
 	struct evhttp *http;
 	struct evhttp_bound_socket *sock;
+	struct event *interrupt_event;
 	int opt, err, port = 0;
 
 	while ((opt = getopt(argc, argv, "p:")) != -1) {
@@ -117,9 +124,22 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
+	/* Trap SIGINT. The handler will call event_base_loopexit()
+	 * and we get to do cleanup.
+	 */
+	interrupt_event = evsignal_new(base, SIGINT, interrupted, base);
+	if (interrupt_event == NULL) {
+		fprintf(stderr, "Failed to trap SIGINT\n");
+		event_base_free(base);
+		return 1;
+	}
+	evsignal_add(interrupt_event, NULL);
+
 	http = evhttp_new(base);
 	if (http == NULL) {
 		perror("evhttp_new()");
+		evsignal_del(interrupt_event);
+		event_free(interrupt_event);
 		event_base_free(base);
 		return 1;
 	}
@@ -127,6 +147,8 @@ int main(int argc, char **argv)
 	if ((sock = evhttp_bind_socket_with_handle(http, "localhost", port)) == NULL) {
 		perror("evhttp_bind_socket()");
 		evhttp_free(http);
+		evsignal_del(interrupt_event);
+		event_free(interrupt_event);
 		event_base_free(base);
 		return 1;
 	}
@@ -137,6 +159,8 @@ int main(int argc, char **argv)
 	if ((err = auth_init(&app.auth, port)) != 0) {
 		fprintf(stderr, "auth_init(): %s\n", strerror(err));
 		evhttp_free(http);
+		evsignal_del(interrupt_event);
+		event_free(interrupt_event);
 		event_base_free(base);
 		return err;
 	}
@@ -146,6 +170,10 @@ int main(int argc, char **argv)
 	evhttp_set_gencb(http, handle_request, &app);
 
 	event_base_dispatch(base);
+	printf("Interrupted\n");
+
+	evsignal_del(interrupt_event);
+	event_free(interrupt_event);
 
 	auth_destroy(app.auth);
 	evhttp_free(http);
