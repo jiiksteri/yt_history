@@ -11,6 +11,7 @@
 #include <event2/keyvalq_struct.h>
 
 #include "conf.h"
+#include "reply.h"
 
 struct auth_engine {
 	char auth_url[2048];
@@ -34,7 +35,20 @@ static void auth_dispatch(struct auth_engine *auth, struct evhttp_request *req)
 
 static void auth_cb(struct auth_engine *auth, struct evhttp_request *req, struct evkeyvalq *params)
 {
-	evhttp_send_error(req, HTTP_NOTIMPLEMENTED, "TBD: Handle auth callback");
+	const char *error;
+
+	if ((error = evhttp_find_header(params, "error")) != NULL) {
+		if (strcmp(error, "access_denied") == 0) {
+			reply(req,
+			      "<p>So um.. You're new to this, aren't you?"
+			      "You're supposed to say yes. Let's try"
+			      " <a href=\"/\">again</a>, ok?");
+		} else {
+			reply(req, "<p>Uh oh</p>");
+		}
+	} else {
+		evhttp_send_error(req, HTTP_NOTIMPLEMENTED, "TBD: Handle auth callback");
+	}
 }
 
 
