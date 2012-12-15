@@ -12,12 +12,15 @@
 
 #include "conf.h"
 #include "reply.h"
+#include "https.h"
 
 struct auth_engine {
 	char auth_url[2048];
 	char client_id[512];
 	char client_secret[512];
 	int local_port;
+
+	struct https_engine *https;
 };
 
 
@@ -35,11 +38,40 @@ static void auth_dispatch(struct auth_engine *auth, struct evhttp_request *req)
 	evbuffer_free(buf);
 }
 
+static void token_response_read_cb(struct bufferevent *bev, void *arg)
+{
+	printf("%s(): Not implemented!\n", __func__);
+}
+
+static void token_response_event_cb(struct bufferevent *bev, short what, void *arg)
+{
+	printf("%s(): Not implemented!\n", __func__);
+}
 
 static void request_token(struct auth_engine *auth, struct evhttp_request *req,
 			  const char *code)
 {
-	evhttp_send_error(req, HTTP_NOTIMPLEMENTED, "request_token() not implemented");
+	struct evbuffer *body;
+	char *err_msg;
+
+	body = evbuffer_new();
+	if (body == NULL) {
+		evhttp_send_error(req, HTTP_INTERNAL, "Failed to allocate memory");
+		return;
+	}
+
+	err_msg = https_post(auth->https, "accounts.google.com", 443, body,
+			     token_response_read_cb, token_response_event_cb);
+
+	if (err_msg != NULL) {
+		evhttp_send_error(req, HTTP_INTERNAL, err_msg);
+	} else {
+		/* Authentication was splendid. Let's hit the list. */
+		reply_redirect(req, "/list");
+	}
+
+	free(err_msg);
+	evbuffer_free(body);
 }
 
 
@@ -125,11 +157,17 @@ int auth_init(struct auth_engine **authp, int local_port)
 		return EINVAL;
 	}
 
+	if ((err = https_engine_init(&auth->https)) != 0) {
+		free(auth);
+		return err;
+	}
+
 	*authp = auth;
 	return 0;
 }
 
 void auth_destroy(struct auth_engine *auth)
 {
+	https_engine_destroy(auth->https);
 	free(auth);
 }

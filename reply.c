@@ -23,3 +23,15 @@ void reply(struct evhttp_request *req, const char *fmt, ...)
 }
 
 
+void reply_redirect(struct evhttp_request *req, const char *where)
+{
+	struct evbuffer *buf;
+
+	buf = evbuffer_new();
+
+	evhttp_add_header(evhttp_request_get_output_headers(req),
+			  "Location", where);
+	evhttp_send_reply(req, HTTP_MOVETEMP, "If you were so kind", buf);
+
+	evbuffer_free(buf);
+}
