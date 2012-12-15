@@ -15,6 +15,9 @@
 
 struct auth_engine {
 	char auth_url[2048];
+	char client_id[512];
+	char client_secret[512];
+	int local_port;
 };
 
 
@@ -33,9 +36,17 @@ static void auth_dispatch(struct auth_engine *auth, struct evhttp_request *req)
 }
 
 
+static void request_token(struct auth_engine *auth, struct evhttp_request *req,
+			  const char *code)
+{
+	evhttp_send_error(req, HTTP_NOTIMPLEMENTED, "request_token() not implemented");
+}
+
+
 static void auth_cb(struct auth_engine *auth, struct evhttp_request *req, struct evkeyvalq *params)
 {
 	const char *error;
+	const char *code;
 
 	if ((error = evhttp_find_header(params, "error")) != NULL) {
 		if (strcmp(error, "access_denied") == 0) {
@@ -46,6 +57,8 @@ static void auth_cb(struct auth_engine *auth, struct evhttp_request *req, struct
 		} else {
 			reply(req, "<p>Uh oh</p>");
 		}
+	} else if ((code = evhttp_find_header(params, "code")) != NULL) {
+		request_token(auth, req, code);
 	} else {
 		evhttp_send_error(req, HTTP_NOTIMPLEMENTED, "TBD: Handle auth callback");
 	}
@@ -75,17 +88,25 @@ void auth_handle(struct auth_engine *auth, struct evhttp_request *req, struct ev
 int auth_init(struct auth_engine **authp, int local_port)
 {
 	struct auth_engine *auth;
-	char client_id[512];
 	int err;
 	int n;
-
-	if ((err = conf_read("client_id", client_id, sizeof(client_id))) != 0) {
-		return err;
-	}
 
 	auth = malloc(sizeof(*auth));
 	if (auth == NULL) {
 		return errno;
+	}
+
+	memset(auth, 0, sizeof(*auth));
+	auth->local_port = local_port;
+
+	if ((err = conf_read("client_id", auth->client_id, sizeof(auth->client_id))) != 0) {
+		free(auth);
+		return err;
+	}
+
+	if ((err = conf_read("client_secret", auth->client_secret, sizeof(auth->client_secret))) != 0) {
+		free(auth);
+		return err;
 	}
 
 	n = snprintf(auth->auth_url, sizeof(auth->auth_url),
@@ -97,7 +118,7 @@ int auth_init(struct auth_engine **authp, int local_port)
 		     "&approval_prompt=auto"
 		     "&access_type=online"
 		     "&state=auth",
-		     client_id, local_port);
+		     auth->client_id, local_port);
 
 	if (n == sizeof(auth->auth_url)) {
 		free(auth);
