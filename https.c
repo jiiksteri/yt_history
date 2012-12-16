@@ -71,6 +71,8 @@ struct request_ctx {
 	const char *method;
 	const char *path;
 
+	const char *access_token;
+
 	struct evbuffer *request_body;
 
 	void (*read_cb)(struct evbuffer *buf, void *arg);
@@ -224,6 +226,12 @@ static void cb_event(struct bufferevent *bev, short what, void *arg)
 				    req->path,
 				    req->host);
 
+		if (req->access_token != NULL) {
+			evbuffer_add_printf(bufferevent_get_output(bev),
+					    "Authorization: Bearer %s\r\n",
+					    req->access_token);
+		}
+
 		if (strcmp(req->method, "POST") == 0) {
 			evbuffer_add_printf(bufferevent_get_output(bev),
 					    "Content-Type: application/x-www-form-urlencoded\r\n");
@@ -279,6 +287,7 @@ static void cb_event(struct bufferevent *bev, short what, void *arg)
 char *https_request(struct https_engine *https,
 		    const char *host, int port,
 		    const char *method, const char *path,
+		    const char *access_token,
 		    struct evbuffer *body,
 		    void (*read_cb)(struct evbuffer *buf, void *arg),
 		    void *cb_arg)
@@ -317,6 +326,7 @@ char *https_request(struct https_engine *https,
 	request.host = host;
 	request.port = port;
 	request.path = path;
+	request.access_token = access_token;
 	request.request_body = body;
 	request.read_cb = read_cb;
 	request.cb_arg = cb_arg;
@@ -359,6 +369,7 @@ char *https_post(struct https_engine *https,
 	return https_request(https,
 			     host, port,
 			     "POST", path,
+			     (char *)NULL,
 			     body,
 			     read_cb, cb_arg);
 }
