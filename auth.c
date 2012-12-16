@@ -64,15 +64,9 @@ static void dump_contents(struct evbuffer *buf, char *prefix)
 	}
 }
 
-static void store_token(struct evhttp_request *req, struct access_token *token)
-{
-	printf("%s(): Um right. Where am I supposed to put this?\n", __func__);
 
-	/* So we're going to need like sessions and shit now. */
-}
-
-static void request_token(struct auth_engine *auth, struct evhttp_request *req,
-			  const char *code)
+static void request_token(struct auth_engine *auth, struct session *session,
+			  struct evhttp_request *req, const char *code)
 {
 	struct evbuffer *body;
 	struct evbuffer *token_buf;
@@ -111,7 +105,8 @@ static void request_token(struct auth_engine *auth, struct evhttp_request *req,
 		if (token_parse_json(&token, token_buf) != 0) {
 			evhttp_send_error(req, HTTP_INTERNAL, "Invalid token json");
 		} else {
-			store_token(req, token);
+			session_set_value(session, "access_token", token->access_token);
+			token_free(token);
 			/* Authentication was splendid. Let's hit the list. */
 			reply_redirect(req, "/list");
 		}
@@ -123,7 +118,7 @@ static void request_token(struct auth_engine *auth, struct evhttp_request *req,
 }
 
 
-static void auth_cb(struct auth_engine *auth, struct evhttp_request *req, struct evkeyvalq *params)
+static void auth_cb(struct auth_engine *auth, struct session *session, struct evhttp_request *req, struct evkeyvalq *params)
 {
 	const char *error;
 	const char *code;
@@ -138,7 +133,7 @@ static void auth_cb(struct auth_engine *auth, struct evhttp_request *req, struct
 			reply(req, "<p>Uh oh</p>");
 		}
 	} else if ((code = evhttp_find_header(params, "code")) != NULL) {
-		request_token(auth, req, code);
+		request_token(auth, session, req, code);
 	} else {
 		evhttp_send_error(req, HTTP_NOTIMPLEMENTED, "TBD: Handle auth callback");
 	}
@@ -156,7 +151,7 @@ void auth_handle(struct auth_engine *auth, struct session *session, struct evhtt
 
 	state = evhttp_find_header(&params, "state");
 	if (state != NULL && strcmp(state, "auth") == 0) {
-		auth_cb(auth, req, &params);
+		auth_cb(auth, session, req, &params);
 	} else {
 		auth_dispatch(auth, req);
 	}
