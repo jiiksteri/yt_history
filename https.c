@@ -68,6 +68,7 @@ struct request_ctx {
 
 	const char *host;
 	int port;
+	const char *method;
 	const char *path;
 
 	struct evbuffer *request_body;
@@ -216,18 +217,31 @@ static void cb_event(struct bufferevent *bev, short what, void *arg)
 	switch (what) {
 	case BEV_EVENT_CONNECTED:
 		evbuffer_add_printf(bufferevent_get_output(bev),
-				    "POST %s HTTP/1.1\r\n"
+				    "%s %s HTTP/1.1\r\n"
 				    "Host: %s\r\n"
-				    "Connection: close\r\n"
-				    "Content-Type: application/x-www-form-urlencoded\r\n"
-				    "Content-Length: %zd\r\n"
-				    "\r\n",
+				    "Connection: close\r\n",
+				    req->method,
 				    req->path,
-				    req->host,
-				    evbuffer_get_length(req->request_body));
+				    req->host);
 
-		evbuffer_add_buffer(bufferevent_get_output(bev),
-				    req->request_body);
+		if (strcmp(req->method, "POST") == 0) {
+			evbuffer_add_printf(bufferevent_get_output(bev),
+					    "Content-Type: application/x-www-form-urlencoded\r\n");
+		}
+
+		if (req->request_body != NULL) {
+			evbuffer_add_printf(bufferevent_get_output(bev),
+					    "Content-Length: %zd\r\n",
+					    evbuffer_get_length(req->request_body));
+		}
+
+		evbuffer_add_printf(bufferevent_get_output(bev), "\r\n");
+
+		if (req->request_body != NULL) {
+			evbuffer_add_buffer(bufferevent_get_output(bev),
+					    req->request_body);
+		}
+
 		bufferevent_enable(bev, EV_READ|EV_WRITE);
 		break;
 
@@ -262,12 +276,12 @@ static void cb_event(struct bufferevent *bev, short what, void *arg)
 }
 
 
-char *https_post(struct https_engine *https,
-		 const char *host, int port,
-		 const char *path,
-		 struct evbuffer *body,
-		 void (*read_cb)(struct evbuffer *buf, void *arg),
-		 void *cb_arg)
+char *https_request(struct https_engine *https,
+		    const char *host, int port,
+		    const char *method, const char *path,
+		    struct evbuffer *body,
+		    void (*read_cb)(struct evbuffer *buf, void *arg),
+		    void *cb_arg)
 {
 	struct request_ctx request;
 	struct bufferevent *bev;
@@ -299,6 +313,7 @@ char *https_post(struct https_engine *https,
 
 	memset(&request, 0, sizeof(request));
 	request.event_base = https->event_base;
+	request.method = method;
 	request.host = host;
 	request.port = port;
 	request.path = path;
@@ -331,4 +346,19 @@ char *https_post(struct https_engine *https,
 	return request.error != NULL
 		? strdup(request.error)
 		: NULL;
+}
+
+
+char *https_post(struct https_engine *https,
+		 const char *host, int port,
+		 const char *path,
+		 struct evbuffer *body,
+		 void (*read_cb)(struct evbuffer *buf, void *arg),
+		 void *cb_arg)
+{
+	return https_request(https,
+			     host, port,
+			     "POST", path,
+			     body,
+			     read_cb, cb_arg);
 }
