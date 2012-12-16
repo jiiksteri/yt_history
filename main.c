@@ -10,6 +10,7 @@
 
 #include "auth.h"
 #include "store.h"
+#include "list.h"
 
 struct app {
 	struct auth_engine *auth;
@@ -39,6 +40,13 @@ static void handle_request(struct evhttp_request *req, void *_app)
 			evhttp_send_error(req, HTTP_INTERNAL, "Failed to ensure session");
 		} else {
 			auth_handle(app->auth, session, req, uri);
+		}
+	} else if (strcmp(path, "/list") == 0) {
+		if ((err = session_ensure(app->store, &session, req)) != 0) {
+			printf("%s(): %s\n", __func__, strerror(err));
+			evhttp_send_error(req, HTTP_INTERNAL, "Failed to ensure session");
+		} else {
+			list_handle(app->auth, session, req, uri);
 		}
 	} else {
 		evhttp_send_error(req, HTTP_NOTFOUND, NULL);
