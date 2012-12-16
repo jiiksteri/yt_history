@@ -11,8 +11,9 @@ void https_engine_destroy(struct https_engine *https);
 
 char *https_post(struct https_engine *https,
 		 const char *host, int port,
+		 const char *path,
 		 struct evbuffer *body,
-		 bufferevent_data_cb read_cb,
-		 bufferevent_event_cb event_cb);
+		 void (*read_cb)(struct evbuffer *buf, void *cb_arg),
+		 void *cb_arg);
 
 #endif

@@ -38,20 +38,35 @@ static void auth_dispatch(struct auth_engine *auth, struct evhttp_request *req)
 	evbuffer_free(buf);
 }
 
-static void token_response_read_cb(struct bufferevent *bev, void *arg)
+static void token_response_read_cb(struct evbuffer *buf, void *arg)
 {
-	printf("%s(): Not implemented!\n", __func__);
+	evbuffer_add_buffer(arg, buf);
+	printf("%s(): token buffer now %zd bytes\n", __func__, evbuffer_get_length(arg));
 }
 
-static void token_response_event_cb(struct bufferevent *bev, short what, void *arg)
+static void dump_contents(struct evbuffer *buf, char *prefix)
 {
-	printf("%s(): Not implemented!\n", __func__);
+	char cbuf[512];
+	int n;
+	int blen;
+
+	blen = evbuffer_get_length(buf);
+
+	printf("%s: %zd/%d bytes\n", prefix,
+	       sizeof(cbuf) > blen ? blen : sizeof(cbuf), blen);
+
+	n = evbuffer_copyout(buf, cbuf, sizeof(cbuf));
+	cbuf[sizeof(cbuf)-1] = '\0';
+	if (n >= 0) {
+		printf("%s\n", cbuf);
+	}
 }
 
 static void request_token(struct auth_engine *auth, struct evhttp_request *req,
 			  const char *code)
 {
 	struct evbuffer *body;
+	struct evbuffer *token_buf;
 	char *err_msg;
 
 	body = evbuffer_new();
@@ -60,8 +75,25 @@ static void request_token(struct auth_engine *auth, struct evhttp_request *req,
 		return;
 	}
 
-	err_msg = https_post(auth->https, "accounts.google.com", 443, body,
-			     token_response_read_cb, token_response_event_cb);
+	token_buf = evbuffer_new();
+	if (token_buf == NULL) {
+		evhttp_send_error(req, HTTP_INTERNAL, "Failed to allocate memory");
+		evbuffer_free(body);
+		return;
+	}
+
+	evbuffer_add_printf(body,
+			    "code=%s"
+			    "&client_id=%s&client_secret=%s"
+			    "&redirect_uri=http://localhost:%d"
+			    "&grant_type=authorization_code",
+			    code, auth->client_id, auth->client_secret,
+			    auth->local_port);
+
+	err_msg = https_post(auth->https, "accounts.google.com", 443, "/o/oauth2/token", body,
+			     token_response_read_cb, token_buf);
+
+	dump_contents(token_buf, "Token buffer after request");
 
 	if (err_msg != NULL) {
 		evhttp_send_error(req, HTTP_INTERNAL, err_msg);
@@ -71,6 +103,7 @@ static void request_token(struct auth_engine *auth, struct evhttp_request *req,
 	}
 
 	free(err_msg);
+	evbuffer_free(token_buf);
 	evbuffer_free(body);
 }
 
