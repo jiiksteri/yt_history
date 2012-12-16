@@ -13,6 +13,7 @@
 #include "conf.h"
 #include "reply.h"
 #include "https.h"
+#include "token.h"
 
 struct auth_engine {
 	char auth_url[2048];
@@ -62,11 +63,19 @@ static void dump_contents(struct evbuffer *buf, char *prefix)
 	}
 }
 
+static void store_token(struct evhttp_request *req, struct access_token *token)
+{
+	printf("%s(): Um right. Where am I supposed to put this?\n", __func__);
+
+	/* So we're going to need like sessions and shit now. */
+}
+
 static void request_token(struct auth_engine *auth, struct evhttp_request *req,
 			  const char *code)
 {
 	struct evbuffer *body;
 	struct evbuffer *token_buf;
+	struct access_token *token;
 	char *err_msg;
 
 	body = evbuffer_new();
@@ -98,8 +107,13 @@ static void request_token(struct auth_engine *auth, struct evhttp_request *req,
 	if (err_msg != NULL) {
 		evhttp_send_error(req, HTTP_INTERNAL, err_msg);
 	} else {
-		/* Authentication was splendid. Let's hit the list. */
-		reply_redirect(req, "/list");
+		if (token_parse_json(&token, token_buf) != 0) {
+			evhttp_send_error(req, HTTP_INTERNAL, "Invalid token json");
+		} else {
+			store_token(req, token);
+			/* Authentication was splendid. Let's hit the list. */
+			reply_redirect(req, "/list");
+		}
 	}
 
 	free(err_msg);
