@@ -12,4 +12,7 @@ void auth_destroy(struct auth_engine *auth);
 
 void auth_handle(struct auth_engine *auth, struct session *session, struct evhttp_request *req, struct evhttp_uri *uri);
 
+/* FIXME: The https engine needs to move out from auth */
+struct https_engine *auth_https(struct auth_engine *auth);
+
 #endif

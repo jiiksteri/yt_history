@@ -214,3 +214,8 @@ void auth_destroy(struct auth_engine *auth)
 	https_engine_destroy(auth->https);
 	free(auth);
 }
+
+struct https_engine *auth_https(struct auth_engine *auth)
+{
+	return auth->https;
+}
