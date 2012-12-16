@@ -14,6 +14,7 @@
 #include "reply.h"
 #include "https.h"
 #include "token.h"
+#include "store.h"
 
 struct auth_engine {
 	char auth_url[2048];
@@ -145,7 +146,7 @@ static void auth_cb(struct auth_engine *auth, struct evhttp_request *req, struct
 
 
 
-void auth_handle(struct auth_engine *auth, struct evhttp_request *req, struct evhttp_uri *uri)
+void auth_handle(struct auth_engine *auth, struct session *session, struct evhttp_request *req, struct evhttp_uri *uri)
 {
 	struct evkeyvalq params;
 	const char *state;

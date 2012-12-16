@@ -9,9 +9,11 @@
 #include <event2/http.h>
 
 #include "auth.h"
+#include "store.h"
 
 struct app {
 	struct auth_engine *auth;
+	struct store *store;
 };
 
 
@@ -19,8 +21,10 @@ static void handle_request(struct evhttp_request *req, void *_app)
 {
 	struct app *app = _app;
 	struct evhttp_uri *uri;
+	struct session *session;
 	const char *uri_str;
 	const char *path;
+	int err;
 
 	uri_str = evhttp_request_get_uri(req);
 
@@ -30,7 +34,12 @@ static void handle_request(struct evhttp_request *req, void *_app)
 	path = evhttp_uri_get_path(uri);
 
 	if (strcmp(path, "/") == 0) {
-		auth_handle(app->auth, req, uri);
+		if ((err = session_ensure(app->store, &session, req)) != 0) {
+			printf("%s(): %s\n", __func__, strerror(err));
+			evhttp_send_error(req, HTTP_INTERNAL, "Failed to ensure session");
+		} else {
+			auth_handle(app->auth, session, req, uri);
+		}
 	} else {
 		evhttp_send_error(req, HTTP_NOTFOUND, NULL);
 	}
@@ -126,11 +135,22 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
+	err = store_init(&app.store);
+	if (err != 0) {
+		fprintf(stderr, "session_store_init(): %s\n", strerror(err));
+		evhttp_free(http);
+		evsignal_del(interrupt_event);
+		event_free(interrupt_event);
+		event_base_free(base);
+		return err;
+	}
+
 	/* If we had port=0, it's now allocated by bind() */
 	port = lport(sock);
 
 	if ((err = auth_init(&app.auth, port)) != 0) {
 		fprintf(stderr, "auth_init(): %s\n", strerror(err));
+		store_destroy(app.store);
 		evhttp_free(http);
 		evsignal_del(interrupt_event);
 		event_free(interrupt_event);
@@ -144,6 +164,8 @@ int main(int argc, char **argv)
 
 	event_base_dispatch(base);
 	printf("Interrupted\n");
+
+	store_destroy(app.store);
 
 	evsignal_del(interrupt_event);
 	event_free(interrupt_event);
