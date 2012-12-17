@@ -81,7 +81,9 @@ struct request_ctx {
 	char *error;
 
 	enum { READ_STATUS, READ_HEADERS, READ_BODY } read_state;
+
 	int status;
+	char *status_line;
 
 	int content_length;
 	int consumed;
@@ -109,6 +111,7 @@ static void parse_status(struct request_ctx *req, const char *line, size_t len)
 {
 	int i;
 
+	req->status_line = strdup(line);
 	for (i = 0; line[i] != ' ' && i < len; i++) {
 		;
 	}
@@ -293,6 +296,15 @@ static void cb_read(struct bufferevent *bev, void *arg)
 	}
 }
 
+static void store_remote_error(struct request_ctx *req)
+{
+	char buf[512];
+	snprintf(buf, sizeof(buf), "%s hates me: %s",
+		 req->host, req->status_line);
+	buf[sizeof(buf)-1] = '\0';
+	req->error = strdup(buf);
+}
+
 static void cb_event(struct bufferevent *bev, short what, void *arg)
 {
 	struct request_ctx *req = arg;
@@ -334,8 +346,12 @@ static void cb_event(struct bufferevent *bev, short what, void *arg)
 		break;
 
 	case BEV_EVENT_ERROR:
-		printf("%s() Received error event. Bytes now %d/%d\n",
-		       __func__, req->consumed, req->content_length);
+		printf("%s(): Received error event. I have"
+		       " status %d, so it's probably %s\n",
+		       __func__, req->status,
+		       req->status == 200
+		       ? "the remote end trying to tell us we are done"
+		       : "something serious");
 		/* For some reason, one that we get to figure out,
 		 * we get a BEV_EVENT_ERROR once the remote end is
 		 * done with us, even as it just sent a successful
@@ -347,10 +363,7 @@ static void cb_event(struct bufferevent *bev, short what, void *arg)
 		 * broken response.
 		 */
 		if (req->status != 200) {
-			/* Pshaw. I suppose we could have a better
-			 * message.
-			 */
-			req->error = "Token request went bewm";
+			store_remote_error(req);
 		}
 		event_base_loopexit(req->event_base, NULL);
 		break;
@@ -433,9 +446,9 @@ char *https_request(struct https_engine *https,
 	 */
 	event_base_dispatch(https->event_base);
 
-	return request.error != NULL
-		? strdup(request.error)
-		: NULL;
+	free(request.status_line);
+
+	return request.error;
 }
 
 
