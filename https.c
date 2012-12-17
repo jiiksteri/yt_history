@@ -86,6 +86,10 @@ struct request_ctx {
 	int content_length;
 	int consumed;
 
+	int chunked;
+	size_t chunk_size;
+	size_t chunk_left;
+
 };
 
 static void cb_write(struct bufferevent *bev, void *arg)
@@ -115,16 +119,89 @@ static void parse_status(struct request_ctx *req, const char *line, size_t len)
 	}
 }
 
+static int read_chunk_size(struct request_ctx *req, struct bufferevent *bev)
+{
+	char *line;
+	char *eptr;
+	size_t n;
+	unsigned long val;
+	int err;
+
+
+	/* A chunk ends with CRLF that's not accounted for by chunk size.
+	 * So we should have an "empty" line followed by next chunk size
+	 */
+	line = NULL;
+	do {
+		free(line);
+		line = read_line(bev, &n);
+	} while (line != NULL && *line == '\0');
+
+	if (line != NULL) {
+		errno = 0;
+		val = strtoul(line, &eptr, 16);
+		if (errno != 0) {
+			err = errno;
+			printf("%s(): bad chunk size '%s': %s\n",
+			       __func__, line, strerror(errno));
+		} else {
+			req->chunk_size = val;
+			req->chunk_left = val;
+			printf("%s(): chunk size: %zd, from '%s'\n", __func__, val, line);
+			err = 0;
+		}
+		free(line);
+	}
+	return err;
+}
+
 static void drain_body(struct request_ctx *req, struct bufferevent *bev)
 {
 	struct evbuffer *buf;
+	struct evbuffer *saved;
 	int before, after;
 
+	if (req->chunked && req->chunk_size == -1) {
+		/* Transfer-Encoding: chunked but we don't have size yet. */
+		if (read_chunk_size(req, bev) != 0) {
+			printf("%s(): could not read chunk size!\n", __func__);
+		}
+	}
+
 	buf = bufferevent_get_input(bev);
+
+	saved = NULL;
 	before = evbuffer_get_length(buf);
-	req->read_cb(bufferevent_get_input(bev), req->cb_arg);
+	if (req->chunked && req->chunk_left < before) {
+		/*
+		 * Save the real buffer away and give the callback
+		 * a temporary one, just the chunk that remains.
+		 */
+		saved = buf;
+		buf = evbuffer_new();
+		evbuffer_remove_buffer(saved, buf, req->chunk_left);
+		before = evbuffer_get_length(buf);
+	}
+
+
+	req->read_cb(buf, req->cb_arg);
 	after = evbuffer_get_length(buf);
 	req->consumed += before - after;
+	req->chunk_left -= (before - after);
+	if (req->chunk_left == 0) {
+		/* We've consumed the whole chunk.
+		 * Signal that we need another one.
+		 */
+		req->chunk_size = -1;
+	}
+
+	if (saved != NULL) {
+		/* saved is actually the buffer in bev */
+		evbuffer_prepend_buffer(saved, buf);
+		evbuffer_free(buf);
+	}
+
+
 }
 
 static void header_keyval(char **key, char **val, char *line)
@@ -195,9 +272,15 @@ static void cb_read(struct bufferevent *bev, void *arg)
 					header_keyval(&key, &val, line);
 					if (strcmp(key, "Content-Length") == 0) {
 						req->content_length = atoi(val);
+					} else if (strcmp(key, "Transfer-Encoding") == 0 &&
+						   strcmp(val, "chunked") == 0) {
+						req->chunked = 1;
+						req->chunk_size = -1;
+						req->chunk_left = -1;
 					}
+					free(line);
+					line = read_line(bev, &n);
 				}
-				line = read_line(bev, &n);
 			}
 		}
 
