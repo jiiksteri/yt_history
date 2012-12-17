@@ -170,12 +170,9 @@ static void set_read_state(struct request_ctx *req, int state)
 
 static void cb_read(struct bufferevent *bev, void *arg)
 {
-	char sbuf[32];
 	struct request_ctx *req = arg;
 	char *line;
 	size_t n;
-
-	printf("%s() state %s\n", __func__, pretty_state(sbuf, sizeof(sbuf), req->read_state));
 
 	while (req->read_state == READ_STATUS || req->read_state == READ_HEADERS) {
 
