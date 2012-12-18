@@ -108,11 +108,7 @@ int token_parse_json(struct access_token **tokenp, struct evbuffer *buf)
 		       __func__, json_tokener_error_desc(jerr));
 	}
 
-	/* FIXME: One idly wonders if we should free obj somehow...
-	 * We probably should but the documentation is.. not clear.
-	 * It might just well be the tokener owns it and it was
-	 * freed with it.
-	 */
+	json_object_put(obj);
 
 	if (ret == 0) {
 		*tokenp = token;
