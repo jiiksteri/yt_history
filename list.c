@@ -69,8 +69,7 @@ void list_handle(struct auth_engine *auth, struct session *session,
 	int start_index, max_results;
 
 	access_token = session_get_value(session, "access_token");
-	printf("%s(): using access token %s\n", __func__,
-	       session_get_value(session, "access_token"));
+	printf("%s(): using access token %s\n", __func__, access_token);
 
 	if (access_token == NULL) {
 		reply_redirect(req, "/");
