@@ -7,6 +7,7 @@
 #include "auth.h"
 #include "https.h"
 #include "feed.h"
+#include "reply.h"
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -72,9 +73,7 @@ void list_handle(struct auth_engine *auth, struct session *session,
 	       session_get_value(session, "access_token"));
 
 	if (access_token == NULL) {
-		printf("%s(): No access token in session. What now?", __func__);
-		evhttp_send_error(req, HTTP_INTERNAL,
-				  "No access token in session!");
+		reply_redirect(req, "/");
 		return;
 	}
 
