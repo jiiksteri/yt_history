@@ -8,14 +8,120 @@
 
 #define SESSION_COOKIE_NAME "YT_HISTORY_SESSION"
 
+struct node {
+	struct node *next;
+	struct node *prev;
+
+	char data[];
+};
+
+static void tangle_node(struct node **head, struct node *node)
+{
+	if (*head) {
+		(*head)->prev = node;
+	}
+	node->next = *head;
+	*head = node;
+}
+
+static void untangle_node(struct node **head, struct node *node)
+{
+	if (node == *head) {
+		*head = node->next;
+	}
+	if (node->next != NULL) {
+		node->next->prev = node->prev;
+	}
+
+	if (node->prev != NULL) {
+		node->prev->next = node->next;
+	}
+}
+
+typedef void (*node_dtor_fn)(void *);
+
+static void nodelist_free(struct node *node, node_dtor_fn dtor)
+{
+	struct node *tmp = node;
+
+	while (node) {
+		tmp = node->next;
+		dtor(node);
+		node = tmp;
+	}
+}
+
+
+static const char *kvnode_key(struct node *node)
+{
+	return node->data + sizeof(size_t);
+}
+
+static const char *kvnode_value(struct node *node)
+{
+	return node->data + *(size_t *)node->data;
+}
+
+static struct node *alloc_node(size_t sz)
+{
+	struct node *node;
+
+	node = malloc(sizeof(*node) + sz);
+	if (node != NULL) {
+		memset(node, 0, sizeof(*node) + sz);
+	}
+	return node;
+}
+
+static struct node *alloc_kvnode(const char *key, const char *value)
+{
+	struct node *node;
+	int klen, vlen;
+
+	klen = strlen(key);
+	vlen = strlen(value);
+
+	/* A kvnode stores its data thusly:
+	 *
+	 *   <valueoffset><key>\0<value>\0
+	 *
+	 * So key starts at &data[sizeof(size_t)], and value
+	 * at &data[*(size_t *)&data]
+	 *
+	 * We don't have a natural container for these, so
+	 * we use the expanding ->data member of node directly
+	 *
+	 * For sessions themselves the situation is different.
+	 * All allocations are embedded inside the struct itself,
+	 * so we can embed a struct node in session and have it
+	 * as the first member, punning it all the way to hell.
+	 */
+
+	node = alloc_node(sizeof(size_t) + klen + 1 + vlen + 1);
+	if (node != NULL) {
+		memcpy(node->data + sizeof(size_t), key, klen + 1);
+		node->data[sizeof(size_t) + klen] = '\0';
+		memcpy(node->data + sizeof(size_t) + klen + 1, value, vlen + 1);
+		*((size_t *)node->data) = sizeof(size_t) + klen + 1;
+	}
+	return node;
+}
+
 struct store {
 	struct hsearch_data sessions;
 	unsigned int seed;
+
+	struct session *snodes;
 };
 
 struct session {
+
+	struct node node;
+
 	char id[20];
 	struct hsearch_data keyvals;
+
+	struct node *kvnodes;
 };
 
 int store_init(struct store **storep)
@@ -46,11 +152,8 @@ int store_init(struct store **storep)
 void store_destroy(struct store *store)
 {
 	if (store != NULL) {
-		/* We should probably figure out how
-		 * to clear it first... :P
-		 */
 		hdestroy_r(&store->sessions);
-
+		nodelist_free((struct node *)store->snodes, (node_dtor_fn)session_free);
 		free(store);
 	}
 }
@@ -116,6 +219,8 @@ static int store_new_session(struct store *store, struct session *session)
 		return ENOMEM;
 	}
 
+	tangle_node((struct node **)&store->snodes, (struct node *)session);
+
 	if (found->data != item.data) {
 		printf("%s(): Uhm. Session already existed ((%p,%p), trying to insert (%p,%p)\n",
 		       __func__,
@@ -168,6 +273,8 @@ int session_ensure(struct store *store, struct session **sessionp, struct evhttp
 void session_free(struct session *session)
 {
 	if (session != NULL) {
+		hdestroy_r(&session->keyvals);
+		nodelist_free(session->kvnodes, free);
 		free(session);
 	}
 }
@@ -177,31 +284,33 @@ int session_set_value(struct session *session, const char *key, const char *valu
 {
 	ENTRY item;
 	ENTRY *found;
+	struct node *node;
 
-	if ((item.key = strdup(key)) == NULL) {
+	node = alloc_kvnode(key, value);
+	if (node == NULL) {
 		return ENOMEM;
 	}
 
-	if ((item.data = strdup(value)) == NULL) {
-		free(item.key);
-		return ENOMEM;
-	}
+	printf("%s(): kvnode_key(): '%s', kvnode_value(): '%s'\n",
+	       __func__, kvnode_key(node), kvnode_value(node));
+
+	item.key = (char *)kvnode_key(node);
+	item.data = node;
 
 	if (!hsearch_r(item, ENTER, &found, &session->keyvals)) {
 		printf("%s(): Failed to store value\n", __func__);
-		free(item.data);
-		free(item.key);
+		free(node);
 		return ENOMEM;
 	}
 
-	if (found->key != item.key) {
-		free(found->key);
-	}
+	tangle_node(&session->kvnodes, node);
 
-	if (found->data != item.data) {
+	if (found->key != item.key) {
+		untangle_node(&session->kvnodes, found->data);
 		free(found->data);
 	}
-	printf("%s() %s stored '%s'\n", __func__, session->id, key);
+
+	printf("%s() %s stored '%s'\n", __func__, session->id, item.key);
 
 	return 0;
 }
@@ -216,5 +325,5 @@ const char *session_get_value(struct session *session, const char *key)
 		printf("%s(): %s hsearch_r() failed\n", __func__, key);
 	}
 
-	return found ? found->data : NULL;
+	return found ? kvnode_value(found->data) : NULL;
 }
