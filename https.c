@@ -464,19 +464,3 @@ char *https_request(struct https_engine *https,
 
 	return request.error;
 }
-
-
-char *https_post(struct https_engine *https,
-		 const char *host, int port,
-		 const char *path,
-		 struct evbuffer *body,
-		 void (*read_cb)(struct evbuffer *buf, void *arg),
-		 void *cb_arg)
-{
-	return https_request(https,
-			     host, port,
-			     "POST", path,
-			     (char *)NULL,
-			     body,
-			     read_cb, cb_arg);
-}

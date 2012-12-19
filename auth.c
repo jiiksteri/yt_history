@@ -94,8 +94,12 @@ static void request_token(struct auth_engine *auth, struct session *session,
 			    code, auth->client_id, auth->client_secret,
 			    auth->local_port);
 
-	err_msg = https_post(auth->https, "accounts.google.com", 443, "/o/oauth2/token", body,
-			     token_response_read_cb, token_buf);
+	err_msg = https_request(auth->https,
+				"accounts.google.com", 443,
+				"POST", "/o/oauth2/token",
+				(char *)NULL,
+				body,
+				token_response_read_cb, token_buf);
 
 	dump_contents(token_buf, "Token buffer after request");
 
