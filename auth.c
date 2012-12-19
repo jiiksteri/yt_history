@@ -40,10 +40,19 @@ static void auth_dispatch(struct auth_engine *auth, struct evhttp_request *req)
 	evbuffer_free(buf);
 }
 
+struct token_request_ctx {
+
+	struct evbuffer *token_buf;
+	struct evbuffer *request_body;
+};
+
 static void token_response_read_cb(struct evbuffer *buf, void *arg)
 {
-	evbuffer_add_buffer(arg, buf);
-	printf("%s(): token buffer now %zd bytes\n", __func__, evbuffer_get_length(arg));
+	struct token_request_ctx *ctx = arg;
+
+	evbuffer_add_buffer(ctx->token_buf, buf);
+	printf("%s(): token buffer now %zd bytes\n",
+	       __func__, evbuffer_get_length(ctx->token_buf));
 }
 
 static void dump_contents(struct evbuffer *buf, char *prefix)
@@ -68,25 +77,29 @@ static void dump_contents(struct evbuffer *buf, char *prefix)
 static void request_token(struct auth_engine *auth, struct session *session,
 			  struct evhttp_request *req, const char *code)
 {
-	struct evbuffer *body;
-	struct evbuffer *token_buf;
+	struct token_request_ctx *ctx;
 	struct access_token *token;
 	char *err_msg;
 
-	body = evbuffer_new();
-	if (body == NULL) {
+	if ((ctx = malloc(sizeof(*ctx))) == NULL) {
 		evhttp_send_error(req, HTTP_INTERNAL, "Failed to allocate memory");
 		return;
 	}
 
-	token_buf = evbuffer_new();
-	if (token_buf == NULL) {
+	if ((ctx->request_body = evbuffer_new()) == NULL) {
 		evhttp_send_error(req, HTTP_INTERNAL, "Failed to allocate memory");
-		evbuffer_free(body);
+		free(ctx);
 		return;
 	}
 
-	evbuffer_add_printf(body,
+	if ((ctx->token_buf = evbuffer_new()) == NULL) {
+		evhttp_send_error(req, HTTP_INTERNAL, "Failed to allocate memory");
+		evbuffer_free(ctx->request_body);
+		free(ctx);
+		return;
+	}
+
+	evbuffer_add_printf(ctx->request_body,
 			    "code=%s"
 			    "&client_id=%s&client_secret=%s"
 			    "&redirect_uri=http://localhost:%d"
@@ -98,15 +111,15 @@ static void request_token(struct auth_engine *auth, struct session *session,
 				"accounts.google.com", 443,
 				"POST", "/o/oauth2/token",
 				(char *)NULL,
-				body,
-				token_response_read_cb, token_buf);
+				ctx->request_body,
+				token_response_read_cb, ctx);
 
-	dump_contents(token_buf, "Token buffer after request");
+	dump_contents(ctx->token_buf, "Token buffer after request");
 
 	if (err_msg != NULL) {
 		evhttp_send_error(req, HTTP_INTERNAL, err_msg);
 	} else {
-		if (token_parse_json(&token, token_buf) != 0) {
+		if (token_parse_json(&token, ctx->token_buf) != 0) {
 			evhttp_send_error(req, HTTP_INTERNAL, "Invalid token json");
 		} else {
 			session_set_value(session, "access_token", token->access_token);
@@ -117,8 +130,9 @@ static void request_token(struct auth_engine *auth, struct session *session,
 	}
 
 	free(err_msg);
-	evbuffer_free(token_buf);
-	evbuffer_free(body);
+	evbuffer_free(ctx->token_buf);
+	evbuffer_free(ctx->request_body);
+	free(ctx);
 }
 
 

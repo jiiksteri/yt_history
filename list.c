@@ -12,10 +12,18 @@
 #include <stdio.h>
 #include <string.h>
 
+struct list_request_ctx {
+
+	char query_buf[512];
+
+	struct feed *feed;
+};
+
 static void read_list(struct evbuffer *buf, void *arg)
 {
-	struct feed *feed = arg;
-	feed_consume(feed, buf);
+	struct list_request_ctx *ctx = arg;
+
+	feed_consume(ctx->feed, buf);
 }
 
 static int atoi_limited(const char *raw, int min, int max)
@@ -62,10 +70,9 @@ static void setup_pagination(int *start, int *max, struct evhttp_uri *uri)
 void list_handle(struct https_engine *https, struct session *session,
 		 struct evhttp_request *req, struct evhttp_uri *uri)
 {
-	char query_buf[512];
+	struct list_request_ctx *ctx;
 	char *err_msg;
 	const char *access_token;
-	struct feed *feed;
 	int err;
 	int start_index, max_results;
 
@@ -77,30 +84,37 @@ void list_handle(struct https_engine *https, struct session *session,
 		return;
 	}
 
+	if ((ctx = malloc(sizeof(*ctx))) == NULL) {
+		evhttp_send_error(req, HTTP_INTERNAL, "Out of memory");
+		return;
+	}
+
 	setup_pagination(&start_index, &max_results, uri);
-	snprintf(query_buf, sizeof(query_buf),
+	snprintf(ctx->query_buf, sizeof(ctx->query_buf),
 		 "/feeds/api/users/default/watch_history?v=2"
 		 "&start-index=%d&max-results=%d",
 		 start_index, max_results);
 
-	printf("%s(): query_buf: '%s'\n", __func__, query_buf);
+	printf("%s(): query_buf: '%s'\n", __func__, ctx->query_buf);
 
-	if ((err = feed_init(&feed, evhttp_request_get_output_buffer(req))) != 0) {
+	if ((err = feed_init(&ctx->feed, evhttp_request_get_output_buffer(req))) != 0) {
 		printf("%s(): feed_init(): %s\n", __func__, strerror(err));
 		evhttp_send_error(req, HTTP_INTERNAL, "feed_init() failed");
+		free(ctx);
+		return;
 	}
 
 
 	err_msg = https_request(https,
 				"gdata.youtube.com", 443,
 				"GET",
-				query_buf,
+				ctx->query_buf,
 				access_token,
 				(struct evbuffer *)NULL,
-				read_list, feed);
+				read_list, ctx);
 
-	feed_final(feed);
-	feed_destroy(feed);
+	feed_final(ctx->feed);
+	feed_destroy(ctx->feed);
 
 	if (err_msg != NULL) {
 		evhttp_send_error(req, HTTP_INTERNAL, err_msg);
@@ -109,4 +123,5 @@ void list_handle(struct https_engine *https, struct session *session,
 				  evhttp_request_get_output_buffer(req));
 	}
 	free(err_msg);
+	free(ctx);
 }
