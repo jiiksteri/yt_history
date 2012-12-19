@@ -242,6 +242,19 @@ static void set_read_state(struct request_ctx *req, int state)
 
 }
 
+static void handle_header(struct request_ctx *req, const char *key, const char *val)
+{
+	if (strcmp(key, "Content-Length") == 0) {
+		req->content_length = atoi(val);
+	} else if (strcmp(key, "Transfer-Encoding") == 0 &&
+		   strcmp(val, "chunked") == 0) {
+		req->chunked = 1;
+		req->chunk_size = -1;
+		req->chunk_left = -1;
+	}
+}
+
+
 static void cb_read(struct bufferevent *bev, void *arg)
 {
 	struct request_ctx *req = arg;
@@ -267,14 +280,7 @@ static void cb_read(struct bufferevent *bev, void *arg)
 					char *key, *val;
 					printf("%s(): header line '%s'\n", __func__, line);
 					header_keyval(&key, &val, line);
-					if (strcmp(key, "Content-Length") == 0) {
-						req->content_length = atoi(val);
-					} else if (strcmp(key, "Transfer-Encoding") == 0 &&
-						   strcmp(val, "chunked") == 0) {
-						req->chunked = 1;
-						req->chunk_size = -1;
-						req->chunk_left = -1;
-					}
+					handle_header(req, key, val);
 					free(line);
 					line = read_line(bev, &n);
 				}
