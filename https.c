@@ -24,7 +24,7 @@ struct https_engine {
 	struct event_base *event_base;
 };
 
-int https_engine_init(struct https_engine **httpsp)
+int https_engine_init(struct https_engine **httpsp, struct event_base *event_base)
 {
 	struct https_engine *https = malloc(sizeof(*https));
 	if (https == NULL) {
@@ -44,11 +44,7 @@ int https_engine_init(struct https_engine **httpsp)
 		return ENOMEM;
 	}
 
-	https->event_base = event_base_new();
-	if (https->event_base == NULL) {
-		SSL_CTX_free(https->ssl_ctx);
-		return ENOMEM;
-	}
+	https->event_base = event_base;
 
 	*httpsp = https;
 
@@ -57,7 +53,6 @@ int https_engine_init(struct https_engine **httpsp)
 
 void https_engine_destroy(struct https_engine *https)
 {
-	event_base_free(https->event_base);
 	SSL_CTX_free(https->ssl_ctx);
 	free(https);
 }
@@ -456,19 +451,4 @@ void https_request(struct https_engine *https,
 	request->cb_arg = cb_arg;
 
 	bufferevent_setcb(bev, cb_read, cb_write, cb_event, request);
-
-	/*
-	 * This is insanely fragile.
-	 *
-	 * We run the event loop with the thread doing the
-	 * http_post(). We rely on exiting the loop when
-	 * _this_ request is done.
-	 *
-	 * In practice, this should work, as we're only
-	 * called from the dispatch thread of the original
-	 * server event base, and as that's stuck here we
-	 * don't get called by anything else.
-	 *
-	 */
-	event_base_dispatch(https->event_base);
 }
