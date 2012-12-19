@@ -252,6 +252,10 @@ static void handle_header(struct request_ctx *req, const char *key, const char *
 		req->chunk_size = -1;
 		req->chunk_left = -1;
 	}
+
+	if (req->cb_ops->response_header) {
+		req->cb_ops->response_header(key, val, req->cb_arg);
+	}
 }
 
 

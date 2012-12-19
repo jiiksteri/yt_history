@@ -12,6 +12,7 @@ void https_engine_destroy(struct https_engine *https);
 struct https_cb_ops {
 	void (*read)(struct evbuffer *buf, void *arg);
 	void (*done)(char *err_mg, void *arg);
+	void (*response_header)(const char *name, const char *value, void *arg);
 };
 
 void https_request(struct https_engine *https,
