@@ -445,6 +445,7 @@ char *https_request(struct https_engine *https,
 	 * done and nothing is touching it.
 	 */
 	event_base_dispatch(https->event_base);
+	bufferevent_free(bev);
 
 	free(request.status_line);
 
