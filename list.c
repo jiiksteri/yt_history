@@ -96,6 +96,7 @@ static void build_query(struct list_request_ctx *ctx, struct evhttp_uri *uri)
 {
 	struct evkeyvalq params;
 	int start_index, max_results;
+	const char *alt;
 
 
 	memset(&params, 0, sizeof(params));
@@ -103,9 +104,21 @@ static void build_query(struct list_request_ctx *ctx, struct evhttp_uri *uri)
 
 	setup_pagination(&start_index, &max_results, &params);
 
+	if ((alt = evhttp_find_header(&params, "alt")) != NULL) {
+		/* If the user specifies any alternative format, even
+		 * atom, do it as passthrough. We're not going to guess
+		 * if we can parse it intelligently or not.
+		 */
+		ctx->passthrough = 1;
+	} else {
+		alt = "atom";
+	}
+
 	snprintf(ctx->query_buf, sizeof(ctx->query_buf),
 		 "/feeds/api/users/default/watch_history?v=2"
+		 "&alt=%s"
 		 "&start-index=%d&max-results=%d",
+		 alt,
 		 start_index, max_results);
 
 
