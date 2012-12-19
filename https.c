@@ -24,7 +24,7 @@ struct https_engine {
 	struct event_base *event_base;
 };
 
-int https_engine_init(struct https_engine **httpsp)
+int https_engine_init(struct https_engine **httpsp, struct event_base *event_base)
 {
 	struct https_engine *https = malloc(sizeof(*https));
 	if (https == NULL) {
@@ -44,11 +44,7 @@ int https_engine_init(struct https_engine **httpsp)
 		return ENOMEM;
 	}
 
-	https->event_base = event_base_new();
-	if (https->event_base == NULL) {
-		SSL_CTX_free(https->ssl_ctx);
-		return ENOMEM;
-	}
+	https->event_base = event_base;
 
 	*httpsp = https;
 
@@ -57,14 +53,11 @@ int https_engine_init(struct https_engine **httpsp)
 
 void https_engine_destroy(struct https_engine *https)
 {
-	event_base_free(https->event_base);
 	SSL_CTX_free(https->ssl_ctx);
 	free(https);
 }
 
 struct request_ctx {
-
-	struct event_base *event_base;
 
 	const char *host;
 	int port;
@@ -76,6 +69,7 @@ struct request_ctx {
 	struct evbuffer *request_body;
 
 	void (*read_cb)(struct evbuffer *buf, void *arg);
+	void (*done_cb)(char *err_msg, void *arg);
 	void *cb_arg;
 
 	char *error;
@@ -305,6 +299,15 @@ static void store_remote_error(struct request_ctx *req)
 	req->error = strdup(buf);
 }
 
+static void request_done(struct request_ctx *req, struct bufferevent *bev)
+{
+	req->done_cb(req->error, req->cb_arg);
+	bufferevent_free(bev);
+	free(req->status_line);
+	free(req);
+}
+
+
 static void cb_event(struct bufferevent *bev, short what, void *arg)
 {
 	struct request_ctx *req = arg;
@@ -378,10 +381,10 @@ static void cb_event(struct bufferevent *bev, short what, void *arg)
 		if (req->status != 200) {
 			store_remote_error(req);
 		}
-		event_base_loopexit(req->event_base, NULL);
+		request_done(req, bev);
 		break;
 	case BEV_EVENT_EOF:
-		event_base_loopexit(req->event_base, NULL);
+		request_done(req, bev);
 		break;
 	default:
 		printf("%s(): Unhandled event: %d\n", __func__, what);
@@ -390,22 +393,30 @@ static void cb_event(struct bufferevent *bev, short what, void *arg)
 }
 
 
-char *https_request(struct https_engine *https,
-		    const char *host, int port,
-		    const char *method, const char *path,
-		    const char *access_token,
-		    struct evbuffer *body,
-		    void (*read_cb)(struct evbuffer *buf, void *arg),
-		    void *cb_arg)
+void https_request(struct https_engine *https,
+		   const char *host, int port,
+		   const char *method, const char *path,
+		   const char *access_token,
+		   struct evbuffer *body,
+		   void (*read_cb)(struct evbuffer *buf, void *arg),
+		   void (*done_cb)(char *err_msg, void *arg),
+		   void *cb_arg)
 {
-	struct request_ctx request;
+	struct request_ctx *request;
 	struct bufferevent *bev;
 	BIO *bio;
 	SSL *ssl;
 
+	if ((request = malloc(sizeof(*request))) == NULL) {
+		done_cb("Out of memory", cb_arg);
+		return;
+	}
+
 	bio = BIO_new(BIO_s_connect());
 	if (bio == NULL) {
-		return "Failed to set up BIO";
+		done_cb("Failed to set up BIO", cb_arg);
+		free(request);
+		return;
 	}
 
 	BIO_set_nbio(bio, 1);
@@ -415,7 +426,9 @@ char *https_request(struct https_engine *https,
 	ssl = SSL_new(https->ssl_ctx);
 	if (ssl == NULL) {
 		BIO_free(bio);
-		return "Failed to set up SSL";
+		done_cb("Failed to set up SSL", cb_arg);
+		free(request);
+		return;
 	}
 
 	SSL_set_bio(ssl, bio, bio);
@@ -426,41 +439,16 @@ char *https_request(struct https_engine *https,
 					     BUFFEREVENT_SSL_CONNECTING,
 					     BEV_OPT_CLOSE_ON_FREE);
 
-	memset(&request, 0, sizeof(request));
-	request.event_base = https->event_base;
-	request.method = method;
-	request.host = host;
-	request.port = port;
-	request.path = path;
-	request.access_token = access_token;
-	request.request_body = body;
-	request.read_cb = read_cb;
-	request.cb_arg = cb_arg;
+	memset(request, 0, sizeof(*request));
+	request->method = method;
+	request->host = host;
+	request->port = port;
+	request->path = path;
+	request->access_token = access_token;
+	request->request_body = body;
+	request->read_cb = read_cb;
+	request->done_cb = done_cb;
+	request->cb_arg = cb_arg;
 
-	bufferevent_setcb(bev, cb_read, cb_write, cb_event, &request);
-
-	/*
-	 * This is insanely fragile.
-	 *
-	 * We run the event loop with the thread doing the
-	 * http_post(). We rely on exiting the loop when
-	 * _this_ request is done.
-	 *
-	 * In practice, this should work, as we're only
-	 * called from the dispatch thread of the original
-	 * server event base, and as that's stuck here we
-	 * don't get called by anything else.
-	 *
-	 * The fact that we're abusing the calling thread
-	 * means we also get away with keeping the request
-	 * on the stack. It's not going away until we are
-	 * and we're only going away once the request is
-	 * done and nothing is touching it.
-	 */
-	event_base_dispatch(https->event_base);
-	bufferevent_free(bev);
-
-	free(request.status_line);
-
-	return request.error;
+	bufferevent_setcb(bev, cb_read, cb_write, cb_event, request);
 }

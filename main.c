@@ -158,7 +158,7 @@ int main(int argc, char **argv)
 		goto out_cleanup;
 	}
 
-	if (https_engine_init(&app.https) != 0) {
+	if (https_engine_init(&app.https, app.base) != 0) {
 		err = errno;
 		fprintf(stderr, "https_init(): %s\n", strerror(err));
 		goto out_cleanup;
