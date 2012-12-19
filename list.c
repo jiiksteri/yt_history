@@ -117,6 +117,18 @@ static struct https_cb_ops list_cb_ops = {
 	.done = done_list,
 };
 
+static int setup_feed(struct list_request_ctx *ctx, struct evhttp_request *req)
+{
+	int err;
+
+	if ((err = feed_init(&ctx->feed, evhttp_request_get_output_buffer(req))) != 0) {
+		printf("%s(): feed_init(): %s\n", __func__, strerror(err));
+		evhttp_send_error(req, HTTP_INTERNAL, "feed_init() failed");
+	}
+	return err;
+}
+
+
 void list_handle(struct https_engine *https, struct session *session,
 		 struct evhttp_request *req, struct evhttp_uri *uri)
 {
@@ -142,9 +154,8 @@ void list_handle(struct https_engine *https, struct session *session,
 
 	printf("%s(): query_buf: '%s'\n", __func__, ctx->query_buf);
 
-	if ((err = feed_init(&ctx->feed, evhttp_request_get_output_buffer(req))) != 0) {
-		printf("%s(): feed_init(): %s\n", __func__, strerror(err));
-		evhttp_send_error(req, HTTP_INTERNAL, "feed_init() failed");
+	if ((err = setup_feed(ctx, req)) != 0) {
+		/* It already sent an error */
 		free(ctx);
 		return;
 	}
