@@ -160,7 +160,7 @@ void auth_handle(struct auth_engine *auth, struct session *session, struct evhtt
 }
 
 
-int auth_init(struct auth_engine **authp, int local_port)
+int auth_init(struct auth_engine **authp, struct https_engine *https, int local_port)
 {
 	struct auth_engine *auth;
 	int err;
@@ -200,10 +200,7 @@ int auth_init(struct auth_engine **authp, int local_port)
 		return EINVAL;
 	}
 
-	if ((err = https_engine_init(&auth->https)) != 0) {
-		free(auth);
-		return err;
-	}
+	auth->https = https;
 
 	*authp = auth;
 	return 0;
@@ -211,7 +208,6 @@ int auth_init(struct auth_engine **authp, int local_port)
 
 void auth_destroy(struct auth_engine *auth)
 {
-	https_engine_destroy(auth->https);
 	free(auth);
 }
 

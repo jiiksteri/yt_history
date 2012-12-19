@@ -20,6 +20,7 @@ struct app {
 	struct evhttp_bound_socket *sock;
 	struct evhttp *http;
 
+	struct https_engine *https;
 	struct auth_engine *auth;
 	struct store *store;
 
@@ -57,7 +58,7 @@ static void handle_request(struct evhttp_request *req, void *_app)
 			printf("%s(): %s\n", __func__, strerror(err));
 			evhttp_send_error(req, HTTP_INTERNAL, "Failed to ensure session");
 		} else {
-			list_handle(app->auth, session, req, uri);
+			list_handle(app->https, session, req, uri);
 		}
 	} else {
 		evhttp_send_error(req, HTTP_NOTFOUND, NULL);
@@ -157,10 +158,17 @@ int main(int argc, char **argv)
 		goto out_cleanup;
 	}
 
+	if (https_engine_init(&app.https) != 0) {
+		err = errno;
+		fprintf(stderr, "https_init(): %s\n", strerror(err));
+		goto out_cleanup;
+	}
+
+
 	/* If we had port=0, it's now allocated by bind() */
 	app.port = lport(app.sock);
 
-	if ((err = auth_init(&app.auth, app.port)) != 0) {
+	if ((err = auth_init(&app.auth, app.https, app.port)) != 0) {
 		fprintf(stderr, "auth_init(): %s\n", strerror(err));
 		goto out_cleanup;
 	}
@@ -181,6 +189,7 @@ int main(int argc, char **argv)
 	event_free(app.interrupt_event);
 
 	auth_destroy(app.auth);
+	https_engine_destroy(app.https);
 	evhttp_free(app.http);
 	event_base_free(app.base);
 

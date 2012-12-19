@@ -4,7 +4,6 @@
 #include <event2/keyvalq_struct.h>
 
 #include "store.h"
-#include "auth.h"
 #include "https.h"
 #include "feed.h"
 #include "reply.h"
@@ -58,7 +57,7 @@ static void setup_pagination(int *start, int *max, struct evhttp_uri *uri)
 	}
 }
 
-void list_handle(struct auth_engine *auth, struct session *session,
+void list_handle(struct https_engine *https, struct session *session,
 		 struct evhttp_request *req, struct evhttp_uri *uri)
 {
 	char query_buf[512];
@@ -90,7 +89,7 @@ void list_handle(struct auth_engine *auth, struct session *session,
 	}
 
 
-	err_msg = https_request(auth_https(auth),
+	err_msg = https_request(https,
 				"gdata.youtube.com", 443,
 				"GET",
 				query_buf,

@@ -3,9 +3,9 @@
 
 #include <event2/http.h>
 #include "store.h"
-#include "auth.h"
+#include "https.h"
 
-void list_handle(struct auth_engine *auth, struct session *session,
+void list_handle(struct https_engine *https, struct session *session,
 		 struct evhttp_request *req, struct evhttp_uri *uri);
 
 
