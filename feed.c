@@ -186,6 +186,8 @@ static void XMLCALL element_end(void *user_data, const char *element)
 		feed->in_entry--;
 	} else if (feed->in_entry && (cdata_target = find_cdata_target(element)) != -1) {
 		copy_cdata_to_field(feed, cdata_target);
+		evbuffer_free(feed->cdata_buf);
+		feed->cdata_buf = NULL;
 	}
 }
 
