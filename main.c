@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <signal.h>
+#include <errno.h>
 
 #include <event2/event.h>
 #include <event2/http.h>
@@ -13,8 +14,18 @@
 #include "list.h"
 
 struct app {
+
+	struct event_base *base;
+
+	struct evhttp_bound_socket *sock;
+	struct evhttp *http;
+
 	struct auth_engine *auth;
 	struct store *store;
+
+	struct event *interrupt_event;
+
+	int port;
 };
 
 
@@ -93,95 +104,86 @@ static void interrupted(evutil_socket_t fd, short events, void *base)
 int main(int argc, char **argv)
 {
 	struct app app;
-	struct event_base *base;
-	struct evhttp *http;
-	struct evhttp_bound_socket *sock;
-	struct event *interrupt_event;
-	int opt, err, port = 0;
+	int opt, err;
+
+	memset(&app, 0, sizeof(app));
 
 	while ((opt = getopt(argc, argv, "p:")) != -1) {
 		switch (opt) {
 		case 'p':
-			port = atoi(optarg);
+			app.port = atoi(optarg);
 			break;
 		default:
-			return 1;
+			err = EXIT_FAILURE;
+			goto out_cleanup;
 		}
 	}
 
-	base = event_base_new();
-	if (!base) {
-		return 1;
+	if ((app.base = event_base_new()) == NULL) {
+		err = errno;
+		goto out_cleanup;
 	}
 
 	/* Trap SIGINT. The handler will call event_base_loopexit()
 	 * and we get to do cleanup.
 	 */
-	interrupt_event = evsignal_new(base, SIGINT, interrupted, base);
-	if (interrupt_event == NULL) {
+	app.interrupt_event = evsignal_new(app.base,
+					   SIGINT, interrupted,
+					   app.base);
+	if (app.interrupt_event == NULL) {
+		err = errno;
 		fprintf(stderr, "Failed to trap SIGINT\n");
-		event_base_free(base);
-		return 1;
+		goto out_cleanup;
 	}
-	evsignal_add(interrupt_event, NULL);
+	evsignal_add(app.interrupt_event, NULL);
 
-	http = evhttp_new(base);
-	if (http == NULL) {
+	if ((app.http = evhttp_new(app.base)) == NULL) {
+		err = errno;
 		perror("evhttp_new()");
-		evsignal_del(interrupt_event);
-		event_free(interrupt_event);
-		event_base_free(base);
-		return 1;
+		goto out_cleanup;
 	}
 
-	if ((sock = evhttp_bind_socket_with_handle(http, "localhost", port)) == NULL) {
+	app.sock = evhttp_bind_socket_with_handle(app.http,
+						  "localhost", app.port);
+	if (app.sock == NULL) {
+		err = errno;
 		perror("evhttp_bind_socket()");
-		evhttp_free(http);
-		evsignal_del(interrupt_event);
-		event_free(interrupt_event);
-		event_base_free(base);
-		return 1;
+		goto out_cleanup;
 	}
 
 	err = store_init(&app.store);
 	if (err != 0) {
 		fprintf(stderr, "session_store_init(): %s\n", strerror(err));
-		evhttp_free(http);
-		evsignal_del(interrupt_event);
-		event_free(interrupt_event);
-		event_base_free(base);
-		return err;
+		goto out_cleanup;
 	}
 
 	/* If we had port=0, it's now allocated by bind() */
-	port = lport(sock);
+	app.port = lport(app.sock);
 
-	if ((err = auth_init(&app.auth, port)) != 0) {
+	if ((err = auth_init(&app.auth, app.port)) != 0) {
 		fprintf(stderr, "auth_init(): %s\n", strerror(err));
-		store_destroy(app.store);
-		evhttp_free(http);
-		evsignal_del(interrupt_event);
-		event_free(interrupt_event);
-		event_base_free(base);
-		return err;
+		goto out_cleanup;
 	}
 
-	printf("http://localhost:%d/\n", lport(sock));
+	printf("http://localhost:%d/\n", app.port);
 
-	evhttp_set_gencb(http, handle_request, &app);
+	evhttp_set_gencb(app.http, handle_request, &app);
 
-	event_base_dispatch(base);
+	event_base_dispatch(app.base);
 	printf("Interrupted\n");
+	err = 0;
+
+ out_cleanup:
 
 	store_destroy(app.store);
 
-	evsignal_del(interrupt_event);
-	event_free(interrupt_event);
+	evsignal_del(app.interrupt_event);
+	event_free(app.interrupt_event);
 
 	auth_destroy(app.auth);
-	evhttp_free(http);
-	event_base_free(base);
+	evhttp_free(app.http);
+	event_base_free(app.base);
 
-	return 0;
+	return err;
 
 }
