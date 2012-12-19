@@ -309,6 +309,7 @@ static void request_done(struct request_ctx *req, struct bufferevent *bev)
 	req->done_cb(req->error, req->cb_arg);
 	bufferevent_free(bev);
 	free(req->status_line);
+	free(req);
 }
 
 
@@ -406,14 +407,20 @@ void https_request(struct https_engine *https,
 		   void (*done_cb)(char *err_msg, void *arg),
 		   void *cb_arg)
 {
-	struct request_ctx request;
+	struct request_ctx *request;
 	struct bufferevent *bev;
 	BIO *bio;
 	SSL *ssl;
 
+	if ((request = malloc(sizeof(*request))) == NULL) {
+		done_cb("Out of memory", cb_arg);
+		return;
+	}
+
 	bio = BIO_new(BIO_s_connect());
 	if (bio == NULL) {
 		done_cb("Failed to set up BIO", cb_arg);
+		free(request);
 		return;
 	}
 
@@ -425,6 +432,7 @@ void https_request(struct https_engine *https,
 	if (ssl == NULL) {
 		BIO_free(bio);
 		done_cb("Failed to set up SSL", cb_arg);
+		free(request);
 		return;
 	}
 
@@ -436,18 +444,18 @@ void https_request(struct https_engine *https,
 					     BUFFEREVENT_SSL_CONNECTING,
 					     BEV_OPT_CLOSE_ON_FREE);
 
-	memset(&request, 0, sizeof(request));
-	request.method = method;
-	request.host = host;
-	request.port = port;
-	request.path = path;
-	request.access_token = access_token;
-	request.request_body = body;
-	request.read_cb = read_cb;
-	request.done_cb = done_cb;
-	request.cb_arg = cb_arg;
+	memset(request, 0, sizeof(*request));
+	request->method = method;
+	request->host = host;
+	request->port = port;
+	request->path = path;
+	request->access_token = access_token;
+	request->request_body = body;
+	request->read_cb = read_cb;
+	request->done_cb = done_cb;
+	request->cb_arg = cb_arg;
 
-	bufferevent_setcb(bev, cb_read, cb_write, cb_event, &request);
+	bufferevent_setcb(bev, cb_read, cb_write, cb_event, request);
 
 	/*
 	 * This is insanely fragile.
@@ -461,11 +469,6 @@ void https_request(struct https_engine *https,
 	 * server event base, and as that's stuck here we
 	 * don't get called by anything else.
 	 *
-	 * The fact that we're abusing the calling thread
-	 * means we also get away with keeping the request
-	 * on the stack. It's not going away until we are
-	 * and we're only going away once the request is
-	 * done and nothing is touching it.
 	 */
 	event_base_dispatch(https->event_base);
 }
