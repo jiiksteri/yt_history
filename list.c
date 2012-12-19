@@ -45,28 +45,22 @@ static int atoi_limited(const char *raw, int min, int max)
 	return cand;
 }
 
-static void setup_pagination(int *start, int *max, struct evhttp_uri *uri)
+static void setup_pagination(int *start, int *max, struct evkeyvalq *params)
 {
-	struct evkeyvalq params;
 	const char *raw;
 
 	*start = 1;
 	*max = 26;
 
-	memset(&params, 0, sizeof(params));
-
-	evhttp_parse_query_str(evhttp_uri_get_query(uri), &params);
-	raw = evhttp_find_header(&params, "start-index");
+	raw = evhttp_find_header(params, "start-index");
 	if (raw != NULL) {
 		*start = atoi_limited(raw, 1, 1000000);
 	}
 
-	raw = evhttp_find_header(&params, "max-results");
+	raw = evhttp_find_header(params, "max-results");
 	if (raw != NULL) {
 		*max = atoi_limited(raw, 1, 50);
 	}
-
-	evhttp_clear_headers(&params);
 }
 
 
@@ -92,13 +86,22 @@ static void done_list(char *err_msg, void *arg)
 
 static void build_query(struct list_request_ctx *ctx, struct evhttp_uri *uri)
 {
+	struct evkeyvalq params;
 	int start_index, max_results;
 
-	setup_pagination(&start_index, &max_results, uri);
+
+	memset(&params, 0, sizeof(params));
+	evhttp_parse_query_str(evhttp_uri_get_query(uri), &params);
+
+	setup_pagination(&start_index, &max_results, &params);
+
 	snprintf(ctx->query_buf, sizeof(ctx->query_buf),
 		 "/feeds/api/users/default/watch_history?v=2"
 		 "&start-index=%d&max-results=%d",
 		 start_index, max_results);
+
+
+	evhttp_clear_headers(&params);
 }
 
 
