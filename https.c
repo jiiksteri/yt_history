@@ -68,8 +68,8 @@ struct request_ctx {
 
 	struct evbuffer *request_body;
 
-	void (*read_cb)(struct evbuffer *buf, void *arg);
-	void (*done_cb)(char *err_msg, void *arg);
+
+	struct https_cb_ops *cb_ops;
 	void *cb_arg;
 
 	char *error;
@@ -181,7 +181,7 @@ static void drain_body(struct request_ctx *req, struct bufferevent *bev)
 	}
 
 
-	req->read_cb(buf, req->cb_arg);
+	req->cb_ops->read(buf, req->cb_arg);
 	after = evbuffer_get_length(buf);
 	req->consumed += before - after;
 	req->chunk_left -= (before - after);
@@ -301,7 +301,7 @@ static void store_remote_error(struct request_ctx *req)
 
 static void request_done(struct request_ctx *req, struct bufferevent *bev)
 {
-	req->done_cb(req->error, req->cb_arg);
+	req->cb_ops->done(req->error, req->cb_arg);
 	bufferevent_free(bev);
 	free(req->status_line);
 	free(req);
@@ -398,8 +398,7 @@ void https_request(struct https_engine *https,
 		   const char *method, const char *path,
 		   const char *access_token,
 		   struct evbuffer *body,
-		   void (*read_cb)(struct evbuffer *buf, void *arg),
-		   void (*done_cb)(char *err_msg, void *arg),
+		   struct https_cb_ops *cb_ops,
 		   void *cb_arg)
 {
 	struct request_ctx *request;
@@ -408,13 +407,13 @@ void https_request(struct https_engine *https,
 	SSL *ssl;
 
 	if ((request = malloc(sizeof(*request))) == NULL) {
-		done_cb("Out of memory", cb_arg);
+		cb_ops->done("Out of memory", cb_arg);
 		return;
 	}
 
 	bio = BIO_new(BIO_s_connect());
 	if (bio == NULL) {
-		done_cb("Failed to set up BIO", cb_arg);
+		cb_ops->done("Failed to set up BIO", cb_arg);
 		free(request);
 		return;
 	}
@@ -426,7 +425,7 @@ void https_request(struct https_engine *https,
 	ssl = SSL_new(https->ssl_ctx);
 	if (ssl == NULL) {
 		BIO_free(bio);
-		done_cb("Failed to set up SSL", cb_arg);
+		cb_ops->done("Failed to set up SSL", cb_arg);
 		free(request);
 		return;
 	}
@@ -446,8 +445,7 @@ void https_request(struct https_engine *https,
 	request->path = path;
 	request->access_token = access_token;
 	request->request_body = body;
-	request->read_cb = read_cb;
-	request->done_cb = done_cb;
+	request->cb_ops = cb_ops;
 	request->cb_arg = cb_arg;
 
 	bufferevent_setcb(bev, cb_read, cb_write, cb_event, request);

@@ -9,13 +9,17 @@ struct https_engine;
 int https_engine_init(struct https_engine **https, struct event_base *event_base);
 void https_engine_destroy(struct https_engine *https);
 
+struct https_cb_ops {
+	void (*read)(struct evbuffer *buf, void *arg);
+	void (*done)(char *err_mg, void *arg);
+};
+
 void https_request(struct https_engine *https,
 		   const char *host, int port,
 		   const char *method, const char *path,
 		   const char *access_token,
 		   struct evbuffer *body,
-		   void (*read_cb)(struct evbuffer *buf, void *arg),
-		   void (*done_cb)(char *err_msg, void *arg),
+		   struct https_cb_ops *cb_ops,
 		   void *cb_arg);
 
 

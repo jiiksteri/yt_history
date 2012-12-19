@@ -90,6 +90,11 @@ static void done_list(char *err_msg, void *arg)
 
 }
 
+static struct https_cb_ops list_cb_ops = {
+	.read = read_list,
+	.done = done_list,
+};
+
 void list_handle(struct https_engine *https, struct session *session,
 		 struct evhttp_request *req, struct evhttp_uri *uri)
 {
@@ -134,7 +139,5 @@ void list_handle(struct https_engine *https, struct session *session,
 		      ctx->query_buf,
 		      access_token,
 		      (struct evbuffer *)NULL,
-		      read_list,
-		      done_list,
-		      ctx);
+		      &list_cb_ops, ctx);
 }

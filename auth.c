@@ -103,6 +103,10 @@ static void done_auth(char *err_msg, void *arg)
 	free(ctx);
 }
 
+static struct https_cb_ops token_cb_ops = {
+	.read = token_response_read_cb,
+	.done = done_auth,
+};
 
 
 static void request_token(struct auth_engine *auth, struct session *session,
@@ -143,9 +147,7 @@ static void request_token(struct auth_engine *auth, struct session *session,
 		      "POST", "/o/oauth2/token",
 		      (char *)NULL,
 		      ctx->request_body,
-		      token_response_read_cb,
-		      done_auth,
-		      ctx);
+		      &token_cb_ops, ctx);
 }
 
 
