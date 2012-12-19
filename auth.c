@@ -109,7 +109,6 @@ static void request_token(struct auth_engine *auth, struct session *session,
 			  struct evhttp_request *req, const char *code)
 {
 	struct token_request_ctx *ctx;
-	char *err_msg;
 
 	if ((ctx = malloc(sizeof(*ctx))) == NULL) {
 		evhttp_send_error(req, HTTP_INTERNAL, "Failed to allocate memory");
@@ -139,14 +138,14 @@ static void request_token(struct auth_engine *auth, struct session *session,
 			    code, auth->client_id, auth->client_secret,
 			    auth->local_port);
 
-	err_msg = https_request(auth->https,
-				"accounts.google.com", 443,
-				"POST", "/o/oauth2/token",
-				(char *)NULL,
-				ctx->request_body,
-				token_response_read_cb, ctx);
-
-	done_auth(err_msg, ctx);
+	https_request(auth->https,
+		      "accounts.google.com", 443,
+		      "POST", "/o/oauth2/token",
+		      (char *)NULL,
+		      ctx->request_body,
+		      token_response_read_cb,
+		      done_auth,
+		      ctx);
 }
 
 

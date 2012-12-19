@@ -64,8 +64,6 @@ void https_engine_destroy(struct https_engine *https)
 
 struct request_ctx {
 
-	struct event_base *event_base;
-
 	const char *host;
 	int port;
 	const char *method;
@@ -76,6 +74,7 @@ struct request_ctx {
 	struct evbuffer *request_body;
 
 	void (*read_cb)(struct evbuffer *buf, void *arg);
+	void (*done_cb)(char *err_msg, void *arg);
 	void *cb_arg;
 
 	char *error;
@@ -305,6 +304,14 @@ static void store_remote_error(struct request_ctx *req)
 	req->error = strdup(buf);
 }
 
+static void request_done(struct request_ctx *req, struct bufferevent *bev)
+{
+	req->done_cb(req->error, req->cb_arg);
+	bufferevent_free(bev);
+	free(req->status_line);
+}
+
+
 static void cb_event(struct bufferevent *bev, short what, void *arg)
 {
 	struct request_ctx *req = arg;
@@ -378,10 +385,10 @@ static void cb_event(struct bufferevent *bev, short what, void *arg)
 		if (req->status != 200) {
 			store_remote_error(req);
 		}
-		event_base_loopexit(req->event_base, NULL);
+		request_done(req, bev);
 		break;
 	case BEV_EVENT_EOF:
-		event_base_loopexit(req->event_base, NULL);
+		request_done(req, bev);
 		break;
 	default:
 		printf("%s(): Unhandled event: %d\n", __func__, what);
@@ -390,13 +397,14 @@ static void cb_event(struct bufferevent *bev, short what, void *arg)
 }
 
 
-char *https_request(struct https_engine *https,
-		    const char *host, int port,
-		    const char *method, const char *path,
-		    const char *access_token,
-		    struct evbuffer *body,
-		    void (*read_cb)(struct evbuffer *buf, void *arg),
-		    void *cb_arg)
+void https_request(struct https_engine *https,
+		   const char *host, int port,
+		   const char *method, const char *path,
+		   const char *access_token,
+		   struct evbuffer *body,
+		   void (*read_cb)(struct evbuffer *buf, void *arg),
+		   void (*done_cb)(char *err_msg, void *arg),
+		   void *cb_arg)
 {
 	struct request_ctx request;
 	struct bufferevent *bev;
@@ -405,7 +413,8 @@ char *https_request(struct https_engine *https,
 
 	bio = BIO_new(BIO_s_connect());
 	if (bio == NULL) {
-		return "Failed to set up BIO";
+		done_cb("Failed to set up BIO", cb_arg);
+		return;
 	}
 
 	BIO_set_nbio(bio, 1);
@@ -415,7 +424,8 @@ char *https_request(struct https_engine *https,
 	ssl = SSL_new(https->ssl_ctx);
 	if (ssl == NULL) {
 		BIO_free(bio);
-		return "Failed to set up SSL";
+		done_cb("Failed to set up SSL", cb_arg);
+		return;
 	}
 
 	SSL_set_bio(ssl, bio, bio);
@@ -427,7 +437,6 @@ char *https_request(struct https_engine *https,
 					     BEV_OPT_CLOSE_ON_FREE);
 
 	memset(&request, 0, sizeof(request));
-	request.event_base = https->event_base;
 	request.method = method;
 	request.host = host;
 	request.port = port;
@@ -435,6 +444,7 @@ char *https_request(struct https_engine *https,
 	request.access_token = access_token;
 	request.request_body = body;
 	request.read_cb = read_cb;
+	request.done_cb = done_cb;
 	request.cb_arg = cb_arg;
 
 	bufferevent_setcb(bev, cb_read, cb_write, cb_event, &request);
@@ -458,9 +468,4 @@ char *https_request(struct https_engine *https,
 	 * done and nothing is touching it.
 	 */
 	event_base_dispatch(https->event_base);
-	bufferevent_free(bev);
-
-	free(request.status_line);
-
-	return request.error;
 }

@@ -94,7 +94,6 @@ void list_handle(struct https_engine *https, struct session *session,
 		 struct evhttp_request *req, struct evhttp_uri *uri)
 {
 	struct list_request_ctx *ctx;
-	char *err_msg;
 	const char *access_token;
 	int err;
 	int start_index, max_results;
@@ -129,13 +128,13 @@ void list_handle(struct https_engine *https, struct session *session,
 	}
 
 
-	err_msg = https_request(https,
-				"gdata.youtube.com", 443,
-				"GET",
-				ctx->query_buf,
-				access_token,
-				(struct evbuffer *)NULL,
-				read_list, ctx);
-
-	done_list(err_msg, ctx);
+	https_request(https,
+		      "gdata.youtube.com", 443,
+		      "GET",
+		      ctx->query_buf,
+		      access_token,
+		      (struct evbuffer *)NULL,
+		      read_list,
+		      done_list,
+		      ctx);
 }
