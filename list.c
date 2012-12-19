@@ -55,6 +55,8 @@ static void setup_pagination(int *start, int *max, struct evhttp_uri *uri)
 	if (raw != NULL) {
 		*max = atoi_limited(raw, 1, 50);
 	}
+
+	evhttp_clear_headers(&params);
 }
 
 void list_handle(struct https_engine *https, struct session *session,
