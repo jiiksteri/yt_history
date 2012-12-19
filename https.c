@@ -308,7 +308,7 @@ static void store_remote_error(struct request_ctx *req)
 static void cb_event(struct bufferevent *bev, short what, void *arg)
 {
 	struct request_ctx *req = arg;
-	switch (what) {
+	switch (what & ~(BEV_EVENT_READING|BEV_EVENT_WRITING)) {
 	case BEV_EVENT_CONNECTED:
 		evbuffer_add_printf(bufferevent_get_output(bev),
 				    "%s %s HTTP/1.1\r\n"
@@ -350,8 +350,9 @@ static void cb_event(struct bufferevent *bev, short what, void *arg)
 		       " status %d, so it's probably %s\n",
 		       __func__, req->status,
 		       req->status == 200
-		       ? "the remote end trying to tell us we are done"
+		       ? "a dirty shutdown"
 		       : "something serious");
+
 		/* For some reason, one that we get to figure out,
 		 * we get a BEV_EVENT_ERROR once the remote end is
 		 * done with us, even as it just sent a successful
@@ -361,6 +362,18 @@ static void cb_event(struct bufferevent *bev, short what, void *arg)
 		 * read anything at all, skip reporting the error
 		 * to the caller and let it deal with the possibly
 		 * broken response.
+		 *
+		 * A bit of debugging shows that this is most likely
+		 * the remote end doing a "dirty shutdown".
+		 *
+		 * A more recent libevent2 would have a way of quiescing
+		 * this via
+		 *
+		 *   bufferevent_openssl_set_allow_dirty_shutdown()
+		 *
+		 * and we'd only get BEV_EVENT_EOF.
+		 *
+		 * But I'm not at all convinced that's the whole story.
 		 */
 		if (req->status != 200) {
 			store_remote_error(req);
