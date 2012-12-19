@@ -57,9 +57,9 @@ static void dump_contents(struct evbuffer *buf, char *prefix)
 	printf("%s: %zd/%d bytes\n", prefix,
 	       sizeof(cbuf) > blen ? blen : sizeof(cbuf), blen);
 
-	n = evbuffer_copyout(buf, cbuf, sizeof(cbuf));
-	cbuf[sizeof(cbuf)-1] = '\0';
+	n = evbuffer_copyout(buf, cbuf, sizeof(cbuf)-1);
 	if (n >= 0) {
+		cbuf[n] = '\0';
 		printf("%s\n", cbuf);
 	}
 }
