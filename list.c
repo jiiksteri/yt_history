@@ -90,6 +90,19 @@ static void done_list(char *err_msg, void *arg)
 
 }
 
+static void build_query(struct list_request_ctx *ctx, struct evhttp_uri *uri)
+{
+	int start_index, max_results;
+
+	setup_pagination(&start_index, &max_results, uri);
+	snprintf(ctx->query_buf, sizeof(ctx->query_buf),
+		 "/feeds/api/users/default/watch_history?v=2"
+		 "&start-index=%d&max-results=%d",
+		 start_index, max_results);
+}
+
+
+
 static struct https_cb_ops list_cb_ops = {
 	.read = read_list,
 	.done = done_list,
@@ -101,7 +114,6 @@ void list_handle(struct https_engine *https, struct session *session,
 	struct list_request_ctx *ctx;
 	const char *access_token;
 	int err;
-	int start_index, max_results;
 
 	access_token = session_get_value(session, "access_token");
 	printf("%s(): using access token %s\n", __func__, access_token);
@@ -117,11 +129,7 @@ void list_handle(struct https_engine *https, struct session *session,
 	}
 	ctx->original_request = req;
 
-	setup_pagination(&start_index, &max_results, uri);
-	snprintf(ctx->query_buf, sizeof(ctx->query_buf),
-		 "/feeds/api/users/default/watch_history?v=2"
-		 "&start-index=%d&max-results=%d",
-		 start_index, max_results);
+	build_query(ctx, uri);
 
 	printf("%s(): query_buf: '%s'\n", __func__, ctx->query_buf);
 
