@@ -63,13 +63,9 @@ static void setup_pagination(int *start, int *max, struct evkeyvalq *params)
 	}
 }
 
-
-static void done_list(char *err_msg, void *arg)
+static void done_free(char *err_msg, void *arg)
 {
 	struct list_request_ctx *ctx = arg;
-
-	feed_final(ctx->feed);
-	feed_destroy(ctx->feed);
 
 	if (err_msg != NULL) {
 		evhttp_send_error(ctx->original_request,
@@ -82,6 +78,16 @@ static void done_list(char *err_msg, void *arg)
 	free(err_msg);
 	free(ctx);
 
+}
+
+static void done_list(char *err_msg, void *arg)
+{
+	struct list_request_ctx *ctx = arg;
+
+	feed_final(ctx->feed);
+	feed_destroy(ctx->feed);
+
+	done_free(err_msg, ctx);
 }
 
 static void build_query(struct list_request_ctx *ctx, struct evhttp_uri *uri)
