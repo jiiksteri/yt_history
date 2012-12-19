@@ -19,6 +19,8 @@ struct list_request_ctx {
 	struct feed *feed;
 
 	struct evhttp_request *original_request;
+
+	int passthrough;
 };
 
 static void read_list(struct evbuffer *buf, void *arg)
@@ -117,6 +119,37 @@ static struct https_cb_ops list_cb_ops = {
 	.done = done_list,
 };
 
+static void read_list_passthrough(struct evbuffer *buf, void *arg)
+{
+	struct list_request_ctx *ctx = arg;
+	evbuffer_add_buffer(evhttp_request_get_output_buffer(ctx->original_request),
+			    buf);
+}
+
+static void response_header_passthrough(const char *key, const char *value, void *arg)
+{
+	struct list_request_ctx *ctx = arg;
+	int pass;
+
+	pass =
+		strcmp(key, "Content-Type") == 0 ||
+		strcmp(key, "Content-Length") == 0;
+
+	if (pass) {
+		evhttp_add_header(evhttp_request_get_output_headers(ctx->original_request),
+				  key, value);
+	}
+}
+
+
+static struct https_cb_ops list_cb_ops_passthrough = {
+	.read = read_list_passthrough,
+	.done = done_free,
+	.response_header = response_header_passthrough,
+};
+
+
+
 static int setup_feed(struct list_request_ctx *ctx, struct evhttp_request *req)
 {
 	int err;
@@ -133,6 +166,7 @@ void list_handle(struct https_engine *https, struct session *session,
 		 struct evhttp_request *req, struct evhttp_uri *uri)
 {
 	struct list_request_ctx *ctx;
+	struct https_cb_ops *cb_ops;
 	const char *access_token;
 	int err;
 
@@ -148,16 +182,23 @@ void list_handle(struct https_engine *https, struct session *session,
 		evhttp_send_error(req, HTTP_INTERNAL, "Out of memory");
 		return;
 	}
+	memset(ctx, 0, sizeof(*ctx));
+
 	ctx->original_request = req;
 
 	build_query(ctx, uri);
 
 	printf("%s(): query_buf: '%s'\n", __func__, ctx->query_buf);
 
-	if ((err = setup_feed(ctx, req)) != 0) {
-		/* It already sent an error */
-		free(ctx);
-		return;
+	if (!ctx->passthrough) {
+		if ((err = setup_feed(ctx, req)) != 0) {
+			/* It already sent an error */
+			free(ctx);
+			return;
+		}
+		cb_ops = &list_cb_ops;
+	} else {
+		cb_ops = &list_cb_ops_passthrough;
 	}
 
 
@@ -167,5 +208,5 @@ void list_handle(struct https_engine *https, struct session *session,
 		      ctx->query_buf,
 		      access_token,
 		      (struct evbuffer *)NULL,
-		      &list_cb_ops, ctx);
+		      cb_ops, ctx);
 }
