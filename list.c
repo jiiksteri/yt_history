@@ -17,6 +17,8 @@ struct list_request_ctx {
 	char query_buf[512];
 
 	struct feed *feed;
+
+	struct evhttp_request *original_request;
 };
 
 static void read_list(struct evbuffer *buf, void *arg)
@@ -67,6 +69,27 @@ static void setup_pagination(int *start, int *max, struct evhttp_uri *uri)
 	evhttp_clear_headers(&params);
 }
 
+
+static void done_list(char *err_msg, void *arg)
+{
+	struct list_request_ctx *ctx = arg;
+
+	feed_final(ctx->feed);
+	feed_destroy(ctx->feed);
+
+	if (err_msg != NULL) {
+		evhttp_send_error(ctx->original_request,
+				  HTTP_INTERNAL, err_msg);
+	} else {
+		evhttp_send_reply(ctx->original_request,
+				  HTTP_OK, "OK",
+				  evhttp_request_get_output_buffer(ctx->original_request));
+	}
+	free(err_msg);
+	free(ctx);
+
+}
+
 void list_handle(struct https_engine *https, struct session *session,
 		 struct evhttp_request *req, struct evhttp_uri *uri)
 {
@@ -88,6 +111,7 @@ void list_handle(struct https_engine *https, struct session *session,
 		evhttp_send_error(req, HTTP_INTERNAL, "Out of memory");
 		return;
 	}
+	ctx->original_request = req;
 
 	setup_pagination(&start_index, &max_results, uri);
 	snprintf(ctx->query_buf, sizeof(ctx->query_buf),
@@ -113,15 +137,5 @@ void list_handle(struct https_engine *https, struct session *session,
 				(struct evbuffer *)NULL,
 				read_list, ctx);
 
-	feed_final(ctx->feed);
-	feed_destroy(ctx->feed);
-
-	if (err_msg != NULL) {
-		evhttp_send_error(req, HTTP_INTERNAL, err_msg);
-	} else {
-		evhttp_send_reply(req, HTTP_OK, "OK",
-				  evhttp_request_get_output_buffer(req));
-	}
-	free(err_msg);
-	free(ctx);
+	done_list(err_msg, ctx);
 }

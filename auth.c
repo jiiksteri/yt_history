@@ -42,6 +42,9 @@ static void auth_dispatch(struct auth_engine *auth, struct evhttp_request *req)
 
 struct token_request_ctx {
 
+	struct evhttp_request *original_request;
+	struct session *session;
+
 	struct evbuffer *token_buf;
 	struct evbuffer *request_body;
 };
@@ -73,18 +76,47 @@ static void dump_contents(struct evbuffer *buf, char *prefix)
 	}
 }
 
+static void done_auth(char *err_msg, void *arg)
+{
+	struct token_request_ctx *ctx = arg;
+	struct access_token *token;
+
+	dump_contents(ctx->token_buf, "Token buffer after request");
+
+	if (err_msg != NULL) {
+		evhttp_send_error(ctx->original_request, HTTP_INTERNAL, err_msg);
+	} else {
+		if (token_parse_json(&token, ctx->token_buf) != 0) {
+			evhttp_send_error(ctx->original_request,
+					  HTTP_INTERNAL, "Invalid token json");
+		} else {
+			session_set_value(ctx->session, "access_token", token->access_token);
+			token_free(token);
+			/* Authentication was splendid. Let's hit the list. */
+			reply_redirect(ctx->original_request, "/list");
+		}
+	}
+
+	free(err_msg);
+	evbuffer_free(ctx->token_buf);
+	evbuffer_free(ctx->request_body);
+	free(ctx);
+}
+
+
 
 static void request_token(struct auth_engine *auth, struct session *session,
 			  struct evhttp_request *req, const char *code)
 {
 	struct token_request_ctx *ctx;
-	struct access_token *token;
 	char *err_msg;
 
 	if ((ctx = malloc(sizeof(*ctx))) == NULL) {
 		evhttp_send_error(req, HTTP_INTERNAL, "Failed to allocate memory");
 		return;
 	}
+	ctx->original_request = req;
+	ctx->session = session;
 
 	if ((ctx->request_body = evbuffer_new()) == NULL) {
 		evhttp_send_error(req, HTTP_INTERNAL, "Failed to allocate memory");
@@ -114,25 +146,7 @@ static void request_token(struct auth_engine *auth, struct session *session,
 				ctx->request_body,
 				token_response_read_cb, ctx);
 
-	dump_contents(ctx->token_buf, "Token buffer after request");
-
-	if (err_msg != NULL) {
-		evhttp_send_error(req, HTTP_INTERNAL, err_msg);
-	} else {
-		if (token_parse_json(&token, ctx->token_buf) != 0) {
-			evhttp_send_error(req, HTTP_INTERNAL, "Invalid token json");
-		} else {
-			session_set_value(session, "access_token", token->access_token);
-			token_free(token);
-			/* Authentication was splendid. Let's hit the list. */
-			reply_redirect(req, "/list");
-		}
-	}
-
-	free(err_msg);
-	evbuffer_free(ctx->token_buf);
-	evbuffer_free(ctx->request_body);
-	free(ctx);
+	done_auth(err_msg, ctx);
 }
 
 
