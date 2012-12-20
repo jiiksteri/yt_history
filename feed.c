@@ -6,6 +6,8 @@
 #include <errno.h>
 
 #include <event2/buffer.h>
+#include <event2/http.h>
+#include <event2/keyvalq_struct.h>
 #include <expat.h>
 
 /* Fields we're interested in. Now, the code that actually figures out
@@ -19,6 +21,8 @@ enum {
 	F_UPDATED,
 	F_PUBLISHED,
 	F_THUMBNAIL,
+	F_LINK_PREVIOUS,
+	F_LINK_NEXT,
 	F__COUNT,
 };
 
@@ -28,6 +32,7 @@ struct feed {
 	XML_Parser parser;
 	struct evbuffer *sink;
 	int header_sent;
+	int navi_sent;
 
 	/* parser state */
 
@@ -108,12 +113,35 @@ static void copy_attribute_keep_old(char **tgt, const char **attrs, const char *
 	}
 }
 
+static void handle_navigation_link(struct feed *feed, const char **attrs)
+{
+	const char *rel;
+	int field;
+
+	rel = find_attribute_value(attrs, "rel");
+	if (rel != NULL) {
+		if (strcmp(rel, "next") == 0) {
+			field = F_LINK_NEXT;
+		} else if (strcmp(rel, "previous") == 0) {
+			field = F_LINK_PREVIOUS;
+		} else {
+			field = -1;
+		}
+
+		if (field != -1) {
+			copy_attribute_keep_old(&feed->fields[field], attrs, "href");
+		}
+	}
+}
+
 static void XMLCALL element_start(void *user_data, const char *element, const char **attrs)
 {
 	struct feed *feed = user_data;
 
 	if (strcmp(element, "entry") == 0) {
 		feed->in_entry++;
+	} else if (feed->in_entry == 0 && strcmp(element, "link") == 0) {
+		handle_navigation_link(feed, attrs);
 	} else if (feed->in_entry) {
 		if (find_cdata_target(element) != -1) {
 			feed->cdata_buf = evbuffer_new();
@@ -133,8 +161,77 @@ static void XMLCALL element_start(void *user_data, const char *element, const ch
 	}
 }
 
+static void filter_query_into(struct evbuffer *buf, const char *full_url)
+{
+	struct evkeyvalq params;
+	const char *val;
+
+	/* FIXME: Remember that passthrough thing we do if
+	 * there's _any_ alt=... format specifier? Yeah, that one.
+	 * Great idea. Now we get to jump through hoops dropping it from
+	 * the next/previous links.
+	 *
+	 * Just go make passthrough an explicit url parameter, and teach
+	 * /list how to deal with alt=atom, so we don't have to do this.
+	 */
+
+	memset(&params, 0, sizeof(params));
+	if (evhttp_parse_query_str(full_url, &params) == -1) {
+		/* Bad idea, we're kind of committed to this :( */
+		return;
+	}
+
+	/* If we'd dig into the internals we could just iterate the parameters
+	 * and skip alt=... As it is, we'll just pick start-index and
+	 * max-results. Those are the only ones /list? will pass to Google
+	 * anyway
+	 */
+	if ((val = evhttp_find_header(&params, "start-index")) != NULL) {
+		evbuffer_add_printf(buf, "start-index=%s&", val);
+	}
+
+	if ((val = evhttp_find_header(&params, "max-results")) != NULL) {
+		evbuffer_add_printf(buf, "max-results=%s&", val);
+	}
+
+	evhttp_clear_headers(&params);
+}
+
+static void parse_and_send_link(struct evbuffer *buf, const char *full_url, const char *name)
+{
+	evbuffer_add_printf(buf, "<a href='");
+
+	if (full_url != NULL) {
+		evbuffer_add_printf(buf, "/list?");
+		filter_query_into(buf, full_url);
+	}
+
+	evbuffer_add_printf(buf, "'>%s</a>\n", name);
+}
+
+static void send_navi(struct feed *feed)
+{
+
+	evbuffer_add_printf(feed->sink, "<div class='navi'>\n");
+
+	if (feed->fields[F_LINK_PREVIOUS] != NULL) {
+		parse_and_send_link(feed->sink, feed->fields[F_LINK_PREVIOUS], "Previous");
+	}
+
+	if (feed->fields[F_LINK_NEXT] != NULL) {
+		parse_and_send_link(feed->sink, feed->fields[F_LINK_NEXT], "Next");
+	}
+
+	evbuffer_add_printf(feed->sink, "</div>");
+}
+
 static void flush_element(struct feed *feed)
 {
+	if (!feed->navi_sent) {
+		send_navi(feed);
+		feed->navi_sent = 1;
+	}
+
 	evbuffer_add_printf(feed->sink,
 			    "<div class='entry'>\n"
 			    "  <a href='%s'>\n"
