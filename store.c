@@ -118,6 +118,8 @@ struct session {
 
 	struct node node;
 
+	struct store *store;
+
 	char id[20];
 	struct hsearch_data keyvals;
 
@@ -258,6 +260,7 @@ int session_ensure(struct store *store, struct session **sessionp, struct evhttp
 	if (session == NULL) {
 		session = malloc(sizeof(*session));
 		memset(session, 0, sizeof(*session));
+		session->store = store;
 		if (!hcreate_r(10, &session->keyvals)) {
 			free(session);
 			return ENOMEM;
@@ -273,8 +276,19 @@ int session_ensure(struct store *store, struct session **sessionp, struct evhttp
 void session_free(struct session *session)
 {
 	if (session != NULL) {
+		untangle_node((struct node **)&session->store->snodes,
+			      (struct node *)session);
 		hdestroy_r(&session->keyvals);
 		nodelist_free(session->kvnodes, free);
+		/* Technically you'd want to untangle() ->kvnodes,
+		 * but that'd require making the nodelist_free()
+		 * node destructor callback take the list head as
+		 * parameter, with our current f'd up linked list
+		 * structure. So no.
+		 *
+		 * They've been freed, make them unreachable too.
+		 */
+		session->kvnodes = NULL;
 		free(session);
 	}
 }
