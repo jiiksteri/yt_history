@@ -1,6 +1,6 @@
 
 TEST_OBJS = suite_feed.o suite_store.o run_tests.o
-PROD_OBJS = feed.o store.o
+PROD_OBJS = verbose.o feed.o store.o
 
 CFLAGS = -g -D_GNU_SOURCE -DTEST -Wall -Werror -I../ $(shell pkg-config --cflags libevent_openssl expat)
 LDFLAGS = -lcunit $(shell pkg-config --libs libevent_openssl expat)

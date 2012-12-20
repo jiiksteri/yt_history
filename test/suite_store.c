@@ -33,14 +33,14 @@ static void test_session_count_overflow(void)
 
 	for (i = 0; i < nel; i++) {
 		do_session_ensure(store, &sessions[i]);
-		verbose("%s(): ensured %d (%p)\n", __func__, i, sessions[i]);
+		verbose(VERBOSE, "%s(): ensured %d (%p)\n", __func__, i, sessions[i]);
 	}
 
 	CU_ASSERT_EQUAL(ENOMEM, do_session_ensure(store, &sessions[i]));
 
 	for (i = 0; i < nel; i++) {
 		session_free(sessions[i]);
-		verbose("%s(): freed %d (%p)\n", __func__, i, sessions[i]);
+		verbose(VERBOSE, "%s(): freed %d (%p)\n", __func__, i, sessions[i]);
 	}
 
 	store_destroy(store);

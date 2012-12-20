@@ -5,7 +5,7 @@
 #include <stdio.h>
 #include <CUnit/Basic.h>
 
-#include "test_util.h"
+#include "verbose.h"
 
 static CU_ErrorCode register_suites()
 {
@@ -27,7 +27,7 @@ int main(int argc, char **argv)
 	int failed;
 
 	if (argc > 1 && strcmp(argv[1], "-v") == 0) {
-		verbose_level++;
+		verbose_adjust_level(+1);
 	}
 
 	if ((cerr = CU_initialize_registry() != CUE_SUCCESS)) {
@@ -40,7 +40,7 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
-	if (verbose_level > 0) {
+	if (verbose_adjust_level(0) > NORMAL) {
 		CU_basic_set_mode(CU_BRM_VERBOSE);
 	}
 
@@ -49,7 +49,7 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
-	if (verbose_level > 0) {
+	if (verbose_adjust_level(0) > NORMAL) {
 		CU_basic_show_failures(CU_get_failure_list());
 	}
 

@@ -14,6 +14,7 @@
 #include <unistd.h>
 
 #include <expat.h>
+#include "verbose.h"
 
 
 static void drain_buffer(FILE *where, struct evbuffer *buf)
@@ -147,7 +148,7 @@ static int hunt_navigation_links(char **prevp, char **nextp, struct evbuffer *bu
 		if (XML_Parse(p, input, n, n == 0) == 0) {
 			err = XML_GetErrorCode(p);
 			if (err != XMLERR_PARSING_FINISHED) {
-				fprintf(stdout, "%s(): [%d]: %s\n", __func__,
+				verbose(NORMAL, "%s(): [%d]: %s\n", __func__,
 					err, XML_ErrorString(err));
 			}
 			break;
