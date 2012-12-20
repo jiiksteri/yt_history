@@ -41,17 +41,17 @@ Place your client id and client secret where yt_history can find them:
 
 Start the server:
 
-    ./yt_history -p <listening_port>
+    ./yt_history -p <listening_port> [ -v [ -v ] ... ]
 
 If you do not specify a port, one will be allocated for you. The
 listening address will be printed on the console.
+
+Passing -v increases verbosity.
 
 Point your browser at localhost. Your browser will be redirected to
 Google for authorization. When the browser returns we show a somewhat
 crude representation of your YouTube Watch History, unless the bugs get
 to us before we get so far.
-
-The server is a bit chatty on the console, but this is nothing to worry about.
 
 ## But why?
 
