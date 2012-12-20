@@ -187,19 +187,20 @@ static void filter_query_into(struct evbuffer *buf, const char *full_url)
 	 * anyway
 	 */
 	if ((val = evhttp_find_header(&params, "start-index")) != NULL) {
-		evbuffer_add_printf(buf, "start-index=%s&", val);
+		evbuffer_add_printf(buf, "start-index=%s&amp;", val);
 	}
 
 	if ((val = evhttp_find_header(&params, "max-results")) != NULL) {
-		evbuffer_add_printf(buf, "max-results=%s&", val);
+		evbuffer_add_printf(buf, "max-results=%s&amp;", val);
 	}
 
 	evhttp_clear_headers(&params);
 }
 
-static void parse_and_send_link(struct evbuffer *buf, const char *full_url, const char *name)
+static void parse_and_send_link(struct evbuffer *buf, const char *full_url,
+				const char *id, const char *name)
 {
-	evbuffer_add_printf(buf, "<a href='");
+	evbuffer_add_printf(buf, "<a id='%s' href='", id);
 
 	if (full_url != NULL) {
 		evbuffer_add_printf(buf, "/list?");
@@ -215,22 +216,60 @@ static void send_navi(struct feed *feed)
 	evbuffer_add_printf(feed->sink, "<div class='navi'>\n");
 
 	if (feed->fields[F_LINK_PREVIOUS] != NULL) {
-		parse_and_send_link(feed->sink, feed->fields[F_LINK_PREVIOUS], "Previous");
+		parse_and_send_link(feed->sink, feed->fields[F_LINK_PREVIOUS],
+				    "prev", "Previous");
 	}
 
 	if (feed->fields[F_LINK_NEXT] != NULL) {
-		parse_and_send_link(feed->sink, feed->fields[F_LINK_NEXT], "Next");
+		parse_and_send_link(feed->sink, feed->fields[F_LINK_NEXT],
+				    "next", "Next");
 	}
 
 	evbuffer_add_printf(feed->sink, "</div>");
 }
 
+static char *amp_to_amp(char *to, size_t sz, const char *from)
+{
+	int ind = 0;
+
+	while (*from && ind < sz) {
+		if (*from == '&') {
+			to[ind++] = '&';
+			to[ind++] = 'a';
+			to[ind++] = 'm';
+			to[ind++] = 'p';
+			to[ind++] = ';';
+		} else {
+			to[ind++] = *from;
+		}
+		from++;
+	}
+
+	if (ind == sz) {
+		printf("%s(): player links grow tall here."
+		       " I had to truncate this: '%s'\n",
+		       __func__, from);
+		ind = sz-1;
+	}
+
+	to[ind++] = '\0';
+	return to;
+}
+
 static void flush_element(struct feed *feed)
 {
+	char clean_player[128];
+
 	if (!feed->navi_sent) {
 		send_navi(feed);
 		feed->navi_sent = 1;
 	}
+
+	/* Sure, browsers deal with unescaped &'s in URLs just fine.
+	 * But our fancy unit... massive expat-using html-parsing test
+	 * thing is picky.
+	 */
+	amp_to_amp(clean_player, sizeof(clean_player), feed->fields[F_PLAYER]);
 
 	evbuffer_add_printf(feed->sink,
 			    "<div class='entry'>\n"
@@ -248,9 +287,9 @@ static void flush_element(struct feed *feed)
 			    "    </div>\n"
 			    "  </div>\n"
 			    "</div>\n",
-			    feed->fields[F_PLAYER],
+			    clean_player,
 			    feed->fields[F_THUMBNAIL],
-			    feed->fields[F_PLAYER],
+			    clean_player,
 			    feed->fields[F_TITLE],
 			    feed->fields[F_UPLOADER],
 			    feed->fields[F_UPDATED],
@@ -328,7 +367,7 @@ static const char *HEADER =
 	"<html>\n"
 	"<head>\n"
 	"  <link href='http://fonts.googleapis.com/css?family=Coda2'"
-	" rel='stylesheet' type='text/css'>"
+	" rel='stylesheet' type='text/css' />"
 	"  <style>\n"
 	"    body {"
 	"      background-color: #666666;"
