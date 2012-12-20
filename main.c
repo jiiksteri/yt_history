@@ -12,6 +12,7 @@
 #include "auth.h"
 #include "store.h"
 #include "list.h"
+#include "verbose.h"
 
 struct app {
 
@@ -109,10 +110,13 @@ int main(int argc, char **argv)
 
 	memset(&app, 0, sizeof(app));
 
-	while ((opt = getopt(argc, argv, "p:")) != -1) {
+	while ((opt = getopt(argc, argv, "p:v")) != -1) {
 		switch (opt) {
 		case 'p':
 			app.port = atoi(optarg);
+			break;
+		case 'v':
+			verbose_adjust_level(+1);
 			break;
 		default:
 			err = EXIT_FAILURE;
