@@ -6,6 +6,8 @@
 #include <errno.h>
 #include <search.h>
 
+#include "verbose.h"
+
 #define SESSION_COOKIE_NAME "YT_HISTORY_SESSION"
 
 struct node {
@@ -168,7 +170,7 @@ static const char *session_id_from_request(struct evhttp_request *req)
 	int nlen;
 
 	cookie = evhttp_find_header(evhttp_request_get_input_headers(req), "Cookie");
-	printf("%s(): Cookie is %s\n", __func__, cookie);
+	verbose(FIREHOSE, "%s(): Cookie is %s\n", __func__, cookie);
 
 	nlen = strlen(SESSION_COOKIE_NAME);
 	if (cookie != NULL && strncmp(SESSION_COOKIE_NAME, cookie, nlen) == 0) {
@@ -194,11 +196,12 @@ static struct session *find_existing_session(struct store *store, const char *id
 
 	needle.key = (char *)id;
 	if (hsearch_r(needle, FIND, &found, &store->sessions)) {
-		printf("%s(): Found existing session with id %s\n", __func__, id);
+		verbose(VERBOSE, "%s(): Found existing session with id %s\n", __func__, id);
 		session = found->data;
 	} else {
-		printf("%s(): Existing session with id %s not found."
-		       " Throwing it away\n", __func__, id);
+		verbose(FIREHOSE,
+			"%s(): Existing session with id %s not found."
+			" Throwing it away\n", __func__, id);
 	}
 
 	return session;
@@ -217,18 +220,22 @@ static int store_new_session(struct store *store, struct session *session)
 	item.data = session;
 	found = NULL;
 	if (!hsearch_r(item, ENTER, &found, &store->sessions)) {
-		printf("%s(): Failed to store session: %s\n",
-		       __func__, strerror(errno));
+		verbose(ERROR, "%s(): Failed to store session: %s\n",
+			__func__, strerror(errno));
 		return errno;
 	}
 
 	tangle_node((struct node **)&store->snodes, (struct node *)session);
 
 	if (found->data != item.data) {
-		printf("%s(): Uhm. Session already existed ((%p,%p), trying to insert (%p,%p)\n",
-		       __func__,
-		       found->key, found->data,
-		       item.key, item.data);
+
+		verbose(ERROR,
+			"%s(): Session already existed ((%p,%p),"
+			" trying to insert (%p,%p)\n",
+			__func__,
+			found->key, found->data,
+			item.key, item.data);
+
 		session_free(found->data);
 	}
 
@@ -243,7 +250,7 @@ static void add_set_cookie(struct evhttp_request *req, const char *id)
 	snprintf(value, sizeof(value), "%s=%s", SESSION_COOKIE_NAME, id);
 	evhttp_add_header(evhttp_request_get_output_headers(req),
 			  "Set-Cookie", value);
-	printf("%s(): added Set-Cookie %s\n", __func__, value);
+	verbose(FIREHOSE, "%s(): added Set-Cookie %s\n", __func__, value);
 
 }
 
@@ -316,14 +323,14 @@ int session_set_value(struct session *session, const char *key, const char *valu
 		return ENOMEM;
 	}
 
-	printf("%s(): kvnode_key(): '%s', kvnode_value(): '%s'\n",
-	       __func__, kvnode_key(node), kvnode_value(node));
+	verbose(FIREHOSE, "%s(): kvnode_key(): '%s', kvnode_value(): '%s'\n",
+		__func__, kvnode_key(node), kvnode_value(node));
 
 	item.key = (char *)kvnode_key(node);
 	item.data = node;
 
 	if (!hsearch_r(item, ENTER, &found, &session->keyvals)) {
-		printf("%s(): Failed to store value\n", __func__);
+		verbose(ERROR, "%s(): Failed to store value\n", __func__);
 		free(node);
 		return ENOMEM;
 	}
@@ -335,7 +342,7 @@ int session_set_value(struct session *session, const char *key, const char *valu
 		free(found->data);
 	}
 
-	printf("%s() %s stored '%s'\n", __func__, session->id, item.key);
+	verbose(FIREHOSE, "%s() %s stored '%s'\n", __func__, session->id, item.key);
 
 	return 0;
 }
@@ -347,7 +354,11 @@ const char *session_get_value(struct session *session, const char *key)
 
 	item.key = (char *)key;
 	if (!hsearch_r(item, FIND, &found, &session->keyvals)) {
-		printf("%s(): %s hsearch_r() failed\n", __func__, key);
+		if (errno != ESRCH) {
+			verbose(ERROR,
+				"%s(): %s hsearch_r() failed: %s\n",
+				__func__, key, strerror(errno));
+		}
 	}
 
 	return found ? kvnode_value(found->data) : NULL;

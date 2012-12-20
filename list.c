@@ -12,6 +12,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "verbose.h"
+
 struct list_request_ctx {
 
 	char query_buf[512];
@@ -36,12 +38,12 @@ static int atoi_limited(const char *raw, int min, int max)
 
 	cand = atoi(raw);
 	if (cand < min) {
-		printf("%s(): limiting '%s' -> %d -> %d\n",
-		       __func__, raw, cand, min);
+		verbose(VERBOSE, "%s(): limiting '%s' -> %d -> %d\n",
+			__func__, raw, cand, min);
 		cand = min;
 	} else if (cand > max) {
-		printf("%s(): limiting '%s' -> %d -> %d\n",
-		       __func__, raw, cand, max);
+		verbose(VERBOSE, "%s(): limiting '%s' -> %d -> %d\n",
+			__func__, raw, cand, max);
 		cand = max;
 	}
 	return cand;
@@ -168,7 +170,7 @@ static int setup_feed(struct list_request_ctx *ctx, struct evhttp_request *req)
 	int err;
 
 	if ((err = feed_init(&ctx->feed, evhttp_request_get_output_buffer(req))) != 0) {
-		printf("%s(): feed_init(): %s\n", __func__, strerror(err));
+		verbose(ERROR, "%s(): feed_init(): %s\n", __func__, strerror(err));
 		evhttp_send_error(req, HTTP_INTERNAL, "feed_init() failed");
 	}
 	return err;
@@ -184,7 +186,7 @@ void list_handle(struct https_engine *https, struct session *session,
 	int err;
 
 	access_token = session_get_value(session, "access_token");
-	printf("%s(): using access token %s\n", __func__, access_token);
+	verbose(VERBOSE, "%s(): using access token %s\n", __func__, access_token);
 
 	if (access_token == NULL) {
 		reply_redirect(req, "/");
@@ -201,7 +203,7 @@ void list_handle(struct https_engine *https, struct session *session,
 
 	build_query(ctx, uri);
 
-	printf("%s(): query_buf: '%s'\n", __func__, ctx->query_buf);
+	verbose(VERBOSE, "%s(): query_buf: '%s'\n", __func__, ctx->query_buf);
 
 	if (!ctx->passthrough) {
 		if ((err = setup_feed(ctx, req)) != 0) {

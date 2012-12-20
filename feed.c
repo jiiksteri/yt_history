@@ -1,7 +1,6 @@
 #include "feed.h"
 
 #include <stdlib.h>
-#include <stdio.h>
 #include <string.h>
 #include <errno.h>
 
@@ -9,6 +8,8 @@
 #include <event2/http.h>
 #include <event2/keyvalq_struct.h>
 #include <expat.h>
+
+#include "verbose.h"
 
 /* Fields we're interested in. Now, the code that actually figures out
  * we're interested in something can't really stand daylight..
@@ -246,9 +247,9 @@ static char *amp_to_amp(char *to, size_t sz, const char *from)
 	}
 
 	if (ind == sz) {
-		printf("%s(): player links grow tall here."
-		       " I had to truncate this: '%s'\n",
-		       __func__, from);
+		verbose(ERROR, "%s(): player links grow tall here."
+			" I had to truncate this: '%s'\n",
+			__func__, from);
 		ind = sz-1;
 	}
 

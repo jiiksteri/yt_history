@@ -42,21 +42,21 @@ static void handle_request(struct evhttp_request *req, void *_app)
 
 	uri_str = evhttp_request_get_uri(req);
 
-	printf("%s(): %s\n", __func__, uri_str);
+	verbose(NORMAL, "%s(): %s\n", __func__, uri_str);
 
 	uri = evhttp_uri_parse(uri_str);
 	path = evhttp_uri_get_path(uri);
 
 	if (strcmp(path, "/") == 0) {
 		if ((err = session_ensure(app->store, &session, req)) != 0) {
-			printf("%s(): %s\n", __func__, strerror(err));
+			verbose(ERROR, "%s(): %s\n", __func__, strerror(err));
 			evhttp_send_error(req, HTTP_INTERNAL, "Failed to ensure session");
 		} else {
 			auth_handle(app->auth, session, req, uri);
 		}
 	} else if (strcmp(path, "/list") == 0) {
 		if ((err = session_ensure(app->store, &session, req)) != 0) {
-			printf("%s(): %s\n", __func__, strerror(err));
+			verbose(ERROR, "%s(): %s\n", __func__, strerror(err));
 			evhttp_send_error(req, HTTP_INTERNAL, "Failed to ensure session");
 		} else {
 			list_handle(app->https, session, req, uri);

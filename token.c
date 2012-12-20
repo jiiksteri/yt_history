@@ -1,13 +1,14 @@
 #include "token.h"
 
 #include <stdlib.h>
-#include <stdio.h>
 #include <errno.h>
 #include <string.h>
 
 #include <event2/buffer.h>
 
 #include <json.h>
+
+#include "verbose.h"
 
 static int copy_value_to_token_int(int *target, struct json_object *obj, const char *key)
 {
@@ -16,7 +17,7 @@ static int copy_value_to_token_int(int *target, struct json_object *obj, const c
 
 	if (json_object_object_get_ex(obj, key, &value)) {
 		*target = json_object_get_int(value);
-		printf("%s(): %s -> %d\n", __func__, key, *target);
+		verbose(VERBOSE, "%s(): %s -> %d\n", __func__, key, *target);
 		ret = 0;
 	} else {
 		ret = EINVAL;
@@ -32,7 +33,7 @@ static int copy_value_to_token_string(char **target, struct json_object *obj, co
 
 	if (json_object_object_get_ex(obj, key, &value)) {
 		*target = strdup(json_object_get_string(value));
-		printf("%s(): %s -> %s\n", __func__, key, *target);
+		verbose(VERBOSE, "%s(): %s -> %s\n", __func__, key, *target);
 		ret = 0;
 	} else {
 		ret = EINVAL;
@@ -45,20 +46,20 @@ static int build_token_into(struct access_token *token, struct json_object *obj)
 {
 	int err;
 
-	printf("%s(): Building token from %p (type '%s')\n",
-	       __func__, obj, json_type_to_name(json_object_get_type(obj)));
+	verbose(FIREHOSE, "%s(): Building token from %p (type '%s')\n",
+		__func__, obj, json_type_to_name(json_object_get_type(obj)));
 
 	err = copy_value_to_token_string(&token->access_token, obj, "access_token");
 	if (err != 0) {
-		printf("%s(): No 'access_token' member in token json (%s)\n",
-		       __func__, strerror(err));
+		verbose(ERROR, "%s(): No 'access_token' member in token json (%s)\n",
+			__func__, strerror(err));
 		return err;
 	}
 
 	err = copy_value_to_token_int(&token->expires_in, obj, "expires_in");
 	if (err != 0) {
-		printf("%s(): No 'expires_in' member in token json (%s)\n",
-		       __func__, strerror(err));
+		verbose(ERROR, "%s(): No 'expires_in' member in token json (%s)\n",
+			__func__, strerror(err));
 	}
 
 	return err;
@@ -85,8 +86,8 @@ int token_parse_json(struct access_token **tokenp, struct evbuffer *buf)
 		removed = evbuffer_remove(buf, cbuf, sizeof(cbuf));
 		obj = json_tokener_parse_ex(tokener, cbuf, removed);
 		jerr = json_tokener_get_error(tokener);
-		printf("%s(): Passed %d bytes, result %p (%s), remaining %zd\n",
-		       __func__, removed, obj, json_tokener_error_desc(jerr),
+		verbose(FIREHOSE, "%s(): Passed %d bytes, result %p (%s), remaining %zd\n",
+			__func__, removed, obj, json_tokener_error_desc(jerr),
 		       evbuffer_get_length(buf));
 	} while (obj == NULL && jerr == json_tokener_continue && evbuffer_get_length(buf) > 0);
 
@@ -104,8 +105,8 @@ int token_parse_json(struct access_token **tokenp, struct evbuffer *buf)
 			}
 		}
 	} else {
-		printf("%s(): json tokener reported: %s\n",
-		       __func__, json_tokener_error_desc(jerr));
+		verbose(FIREHOSE, "%s(): json tokener reported: %s\n",
+			__func__, json_tokener_error_desc(jerr));
 	}
 
 	json_object_put(obj);

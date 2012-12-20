@@ -15,6 +15,7 @@
 #include "https.h"
 #include "token.h"
 #include "store.h"
+#include "verbose.h"
 
 struct auth_engine {
 	char auth_url[2048];
@@ -54,11 +55,11 @@ static void token_response_read_cb(struct evbuffer *buf, void *arg)
 	struct token_request_ctx *ctx = arg;
 
 	evbuffer_add_buffer(ctx->token_buf, buf);
-	printf("%s(): token buffer now %zd bytes\n",
-	       __func__, evbuffer_get_length(ctx->token_buf));
+	verbose(FIREHOSE, "%s(): token buffer now %zd bytes\n",
+		__func__, evbuffer_get_length(ctx->token_buf));
 }
 
-static void dump_contents(struct evbuffer *buf, char *prefix)
+static void dump_contents(enum verbosity_level level, struct evbuffer *buf, char *prefix)
 {
 	char cbuf[512];
 	int n;
@@ -66,13 +67,13 @@ static void dump_contents(struct evbuffer *buf, char *prefix)
 
 	blen = evbuffer_get_length(buf);
 
-	printf("%s: %zd/%d bytes\n", prefix,
-	       sizeof(cbuf) > blen ? blen : sizeof(cbuf), blen);
+	verbose(level, "%s: %zd/%d bytes\n", prefix,
+		sizeof(cbuf) > blen ? blen : sizeof(cbuf), blen);
 
 	n = evbuffer_copyout(buf, cbuf, sizeof(cbuf)-1);
 	if (n >= 0) {
 		cbuf[n] = '\0';
-		printf("%s\n", cbuf);
+		verbose(level, "%s\n", cbuf);
 	}
 }
 
@@ -81,7 +82,9 @@ static void done_auth(char *err_msg, void *arg)
 	struct token_request_ctx *ctx = arg;
 	struct access_token *token;
 
-	dump_contents(ctx->token_buf, "Token buffer after request");
+	if (verbose_adjust_level(0) >= VERBOSE) {
+		dump_contents(VERBOSE, ctx->token_buf, "Token buffer after request");
+	}
 
 	if (err_msg != NULL) {
 		evhttp_send_error(ctx->original_request, HTTP_INTERNAL, err_msg);

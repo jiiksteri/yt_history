@@ -18,6 +18,7 @@
 #include <event2/bufferevent_ssl.h>
 
 #include <openssl/ssl.h>
+#include "verbose.h"
 
 struct https_engine {
 	SSL_CTX *ssl_ctx;
@@ -90,7 +91,7 @@ struct request_ctx {
 
 static void cb_write(struct bufferevent *bev, void *arg)
 {
-	printf("%s(): Write exhausted\n", __func__);
+	verbose(FIREHOSE, "%s(): Write exhausted\n", __func__);
 	bufferevent_disable(bev, EV_WRITE);
 	bufferevent_enable(bev, EV_READ);
 }
@@ -110,7 +111,7 @@ static void parse_status(struct request_ctx *req, const char *line, size_t len)
 		;
 	}
 	if (i == len) {
-		printf("%s(): Invalid status line '%s'\n", __func__, line);
+		verbose(ERROR, "%s(): Invalid status line '%s'\n", __func__, line);
 	} else {
 		req->status = atoi(&line[i+1]);
 	}
@@ -139,12 +140,14 @@ static int read_chunk_size(struct request_ctx *req, struct bufferevent *bev)
 		val = strtoul(line, &eptr, 16);
 		if (errno != 0) {
 			err = errno;
-			printf("%s(): bad chunk size '%s': %s\n",
+			verbose(ERROR, "%s(): bad chunk size '%s': %s\n",
 			       __func__, line, strerror(errno));
 		} else {
 			req->chunk_size = val;
 			req->chunk_left = val;
-			printf("%s(): chunk size: %zd, from '%s'\n", __func__, val, line);
+			verbose(FIREHOSE,
+				"%s(): chunk size: %zd, from '%s'\n",
+				__func__, val, line);
 			err = 0;
 		}
 		free(line);
@@ -161,7 +164,7 @@ static void drain_body(struct request_ctx *req, struct bufferevent *bev)
 	if (req->chunked && req->chunk_size == -1) {
 		/* Transfer-Encoding: chunked but we don't have size yet. */
 		if (read_chunk_size(req, bev) != 0) {
-			printf("%s(): could not read chunk size!\n", __func__);
+			verbose(ERROR, "%s(): could not read chunk size!\n", __func__);
 		}
 	}
 
@@ -235,9 +238,12 @@ static void set_read_state(struct request_ctx *req, int state)
 	char s1[32];
 	char s2[32];
 
-	printf("%s(): %s -> %s\n", __func__,
-	       pretty_state(s1, sizeof(s1), req->read_state),
-	       pretty_state(s2, sizeof(s2), state));
+	if (verbose_adjust_level(0) >= VERBOSE) {
+		verbose(VERBOSE, "%s(): %s -> %s\n", __func__,
+			pretty_state(s1, sizeof(s1), req->read_state),
+			pretty_state(s2, sizeof(s2), state));
+	}
+
 	req->read_state = state;
 
 }
@@ -273,7 +279,7 @@ static void cb_read(struct bufferevent *bev, void *arg)
 		}
 
 		if (req->read_state == READ_STATUS) {
-			printf("%s(): status line: '%s'\n", __func__, line);
+			verbose(VERBOSE, "%s(): status line: '%s'\n", __func__, line);
 			parse_status(req, line, n);
 			set_read_state(req, READ_HEADERS);
 		} else {
@@ -282,7 +288,7 @@ static void cb_read(struct bufferevent *bev, void *arg)
 					set_read_state(req, READ_BODY);
 				} else {
 					char *key, *val;
-					printf("%s(): header line '%s'\n", __func__, line);
+					verbose(VERBOSE, "%s(): header line '%s'\n", __func__, line);
 					header_keyval(&key, &val, line);
 					handle_header(req, key, val);
 					free(line);
@@ -359,12 +365,12 @@ static void cb_event(struct bufferevent *bev, short what, void *arg)
 		break;
 
 	case BEV_EVENT_ERROR:
-		printf("%s(): Received error event. I have"
-		       " status %d, so it's probably %s\n",
-		       __func__, req->status,
-		       req->status == 200
-		       ? "a dirty shutdown"
-		       : "something serious");
+		verbose(ERROR,
+			"%s(): Received error event. I have status %d,"
+			" so it's probably %s\n", __func__, req->status,
+			req->status == 200
+			? "a dirty shutdown"
+			: "something serious");
 
 		/* For some reason, one that we get to figure out,
 		 * we get a BEV_EVENT_ERROR once the remote end is
@@ -397,7 +403,7 @@ static void cb_event(struct bufferevent *bev, short what, void *arg)
 		request_done(req, bev);
 		break;
 	default:
-		printf("%s(): Unhandled event: %d\n", __func__, what);
+		verbose(ERROR, "%s(): Unhandled event: %d\n", __func__, what);
 		break;
 	}
 }
