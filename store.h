@@ -6,7 +6,7 @@
 struct store;
 struct session;
 
-int store_init(struct store **storep);
+int store_init(struct store **storep, int nel);
 void store_destroy(struct store *store);
 
 

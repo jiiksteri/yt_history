@@ -152,7 +152,7 @@ int main(int argc, char **argv)
 		goto out_cleanup;
 	}
 
-	err = store_init(&app.store);
+	err = store_init(&app.store, 10);
 	if (err != 0) {
 		fprintf(stderr, "session_store_init(): %s\n", strerror(err));
 		goto out_cleanup;

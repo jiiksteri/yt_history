@@ -124,7 +124,7 @@ struct session {
 	struct node *kvnodes;
 };
 
-int store_init(struct store **storep)
+int store_init(struct store **storep, int nel)
 {
 	struct store *store;
 
@@ -138,7 +138,7 @@ int store_init(struct store **storep)
 	/* Yeah it's not very random. Nobody cares. */
 	store->seed = (unsigned long)store;
 
-	if (hcreate_r(10, &store->sessions) == 0) {
+	if (hcreate_r(nel, &store->sessions) == 0) {
 		free(store);
 		return ENOMEM;
 	}
