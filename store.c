@@ -217,8 +217,9 @@ static int store_new_session(struct store *store, struct session *session)
 	item.data = session;
 	found = NULL;
 	if (!hsearch_r(item, ENTER, &found, &store->sessions)) {
-		printf("%s(): Failed to store session\n", __func__);
-		return ENOMEM;
+		printf("%s(): Failed to store session: %s\n",
+		       __func__, strerror(errno));
+		return errno;
 	}
 
 	tangle_node((struct node **)&store->snodes, (struct node *)session);
@@ -250,6 +251,7 @@ int session_ensure(struct store *store, struct session **sessionp, struct evhttp
 {
 	const char *id;
 	struct session *session;
+	int err;
 
 	session = NULL;
 	id = session_id_from_request(req);
@@ -257,6 +259,7 @@ int session_ensure(struct store *store, struct session **sessionp, struct evhttp
 		session = find_existing_session(store, id);
 	}
 
+	err = 0;
 	if (session == NULL) {
 		session = malloc(sizeof(*session));
 		memset(session, 0, sizeof(*session));
@@ -265,12 +268,20 @@ int session_ensure(struct store *store, struct session **sessionp, struct evhttp
 			free(session);
 			return ENOMEM;
 		}
-		store_new_session(store, session);
-		add_set_cookie(req, session->id);
+		err = store_new_session(store, session);
+		if (err == 0) {
+			add_set_cookie(req, session->id);
+		} else {
+			hdestroy_r(&session->keyvals);
+			free(session);
+		}
 	}
 
-	*sessionp = session;
-	return 0;
+	if (err == 0) {
+		*sessionp = session;
+	}
+
+	return err;
 }
 
 void session_free(struct session *session)

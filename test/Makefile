@@ -1,8 +1,8 @@
 
-TEST_OBJS = suite_feed.o run_tests.o
-PROD_OBJS = feed.o
+TEST_OBJS = suite_feed.o suite_store.o run_tests.o
+PROD_OBJS = feed.o store.o
 
-CFLAGS = -DTEST -Wall -Werror -I../ $(shell pkg-config --cflags libevent_openssl expat)
+CFLAGS = -g -D_GNU_SOURCE -DTEST -Wall -Werror -I../ $(shell pkg-config --cflags libevent_openssl expat)
 LDFLAGS = -lcunit $(shell pkg-config --libs libevent_openssl expat)
 
 .PHONY: clean all test

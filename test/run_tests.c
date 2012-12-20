@@ -8,9 +8,11 @@
 static CU_ErrorCode register_suites()
 {
 	extern CU_SuiteInfo suite_feed;
+	extern CU_SuiteInfo suite_store;
 
 	CU_SuiteInfo suites[] = {
 		suite_feed,
+		suite_store,
 		CU_SUITE_INFO_NULL,
 	};
 
