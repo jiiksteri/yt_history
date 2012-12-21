@@ -318,6 +318,7 @@ static void store_remote_error(struct request_ctx *req)
 static void request_done(struct request_ctx *req, struct bufferevent *bev)
 {
 	req->cb_ops->done(req->error, req->cb_arg);
+	(void)BIO_set_close(SSL_get_wbio(bufferevent_openssl_get_ssl(bev)), 1);
 	bufferevent_free(bev);
 	free(req->status_line);
 	free(req);
