@@ -42,6 +42,7 @@ int https_engine_init(struct https_engine **httpsp, struct event_base *event_bas
 		/* Can't be arsed to do the full error stack parsing
 		 * nonsense.
 		 */
+		free(https);
 		return ENOMEM;
 	}
 
