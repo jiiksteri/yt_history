@@ -76,7 +76,7 @@ struct request_ctx {
 
 	char *error;
 
-	enum { READ_STATUS, READ_HEADERS, READ_BODY } read_state;
+	enum { READ_STATUS, READ_HEADERS, READ_BODY, READ_DONE } read_state;
 
 	int status;
 	char *status_line;
@@ -163,6 +163,7 @@ static const char *pretty_state(char *buf, size_t len, int state)
 	case READ_STATUS: snprintf(buf, len, "READ_STATUS"); break;
 	case READ_HEADERS: snprintf(buf, len, "READ_HEADERS"); break;
 	case READ_BODY: snprintf(buf, len, "READ_BODY"); break;
+	case READ_DONE: snprintf(buf, len, "READ_DONE"); break;
 	default: snprintf(buf, len, "UNKNWN(%d)", state); break;
 	}
 	return buf;
@@ -183,8 +184,22 @@ static void set_read_state(struct request_ctx *req, int state)
 
 }
 
+static void flush_input(struct request_ctx *req, struct evbuffer *buf)
+{
+	int len;
+
+	while ((len = evbuffer_get_length(buf)) > 0) {
+		verbose(VERBOSE, "%s(): input bytes left: %d\n",
+			__func__, len);
+		req->cb_ops->read(buf, req->cb_arg);
+	}
+}
+
 static void request_done(struct request_ctx *req, struct bufferevent *bev)
 {
+	/* Force the remaining bytes down our consumer's throat. */
+	flush_input(req, bufferevent_get_input(bev));
+
 	req->cb_ops->done(req->error, req->cb_arg);
 	(void)BIO_set_close(SSL_get_wbio(bufferevent_openssl_get_ssl(bev)), 1);
 	bufferevent_free(bev);
@@ -209,7 +224,7 @@ static void drain_body(struct request_ctx *req, struct bufferevent *bev)
 
 	saved = NULL;
 	before = evbuffer_get_length(buf);
-	if (req->chunked && req->chunk_left < before) {
+	if (req->chunked && req->chunk_size > 0 && req->chunk_left < before) {
 		/*
 		 * Save the real buffer away and give the callback
 		 * a temporary one, just the chunk that remains.
@@ -225,7 +240,7 @@ static void drain_body(struct request_ctx *req, struct bufferevent *bev)
 	after = evbuffer_get_length(buf);
 	req->consumed += before - after;
 	req->chunk_left -= (before - after);
-	if (req->chunk_left == 0) {
+	if (req->chunk_size > 0 && req->chunk_left == 0) {
 		/* We've consumed the whole chunk.
 		 * Signal that we need another one.
 		 */
@@ -236,6 +251,11 @@ static void drain_body(struct request_ctx *req, struct bufferevent *bev)
 		/* saved is actually the buffer in bev */
 		evbuffer_prepend_buffer(saved, buf);
 		evbuffer_free(buf);
+	}
+
+	if ((req->chunked && req->chunk_size == 0) ||
+	    (req->content_length > 0 && req->consumed == req->content_length)) {
+		set_read_state(req, READ_DONE);
 	}
 
 
@@ -312,9 +332,14 @@ static void cb_read(struct bufferevent *bev, void *arg)
 
 	}
 
-	if (req->read_state == READ_BODY) {
+	while (req->read_state == READ_BODY && evbuffer_get_length(bufferevent_get_input(bev)) > 0) {
 		drain_body(req, bev);
 	}
+
+	if (req->read_state == READ_DONE) {
+		request_done(req, bev);
+	}
+
 }
 
 static void store_remote_error(struct request_ctx *req)
