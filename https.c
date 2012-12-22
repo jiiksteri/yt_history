@@ -15,18 +15,20 @@
 
 #include <event2/event.h>
 #include <event2/buffer.h>
-#include <event2/bufferevent_ssl.h>
 
-#include <openssl/ssl.h>
 #include "verbose.h"
 
+#include "conn_stash.h"
+
 struct https_engine {
-	SSL_CTX *ssl_ctx;
+	struct conn_stash *conn_stash;
 	struct event_base *event_base;
 };
 
 int https_engine_init(struct https_engine **httpsp, struct event_base *event_base)
 {
+	int err;
+
 	struct https_engine *https = malloc(sizeof(*https));
 	if (https == NULL) {
 		return errno;
@@ -34,16 +36,10 @@ int https_engine_init(struct https_engine **httpsp, struct event_base *event_bas
 
 	memset(https, 0, sizeof(*https));
 
-	SSL_load_error_strings();
-	SSL_library_init();
-
-	https->ssl_ctx = SSL_CTX_new(SSLv23_method());
-	if (https->ssl_ctx == NULL) {
-		/* Can't be arsed to do the full error stack parsing
-		 * nonsense.
-		 */
+	err = conn_stash_init(&https->conn_stash, event_base);
+	if (err != 0) {
 		free(https);
-		return ENOMEM;
+		return errno;
 	}
 
 	https->event_base = event_base;
@@ -55,7 +51,7 @@ int https_engine_init(struct https_engine **httpsp, struct event_base *event_bas
 
 void https_engine_destroy(struct https_engine *https)
 {
-	SSL_CTX_free(https->ssl_ctx);
+	conn_stash_destroy(https->conn_stash);
 	free(https);
 }
 
@@ -87,6 +83,8 @@ struct request_ctx {
 	int chunked;
 	size_t chunk_size;
 	size_t chunk_left;
+
+	struct conn_stash *conn_stash;
 
 };
 
@@ -201,8 +199,7 @@ static void request_done(struct request_ctx *req, struct bufferevent *bev)
 	flush_input(req, bufferevent_get_input(bev));
 
 	req->cb_ops->done(req->error, req->cb_arg);
-	(void)BIO_set_close(SSL_get_wbio(bufferevent_openssl_get_ssl(bev)), 1);
-	bufferevent_free(bev);
+	conn_stash_put_bev(req->conn_stash, bev);
 	free(req->status_line);
 	free(req);
 }
@@ -447,8 +444,6 @@ void https_request(struct https_engine *https,
 {
 	struct request_ctx *request;
 	struct bufferevent *bev;
-	BIO *bio;
-	SSL *ssl;
 
 	if ((request = malloc(sizeof(*request))) == NULL) {
 		cb_ops->done("Out of memory", cb_arg);
@@ -463,33 +458,14 @@ void https_request(struct https_engine *https,
 	request->request_body = body;
 	request->cb_ops = cb_ops;
 	request->cb_arg = cb_arg;
+	request->conn_stash = https->conn_stash;
 
-	bio = BIO_new(BIO_s_connect());
-	if (bio == NULL) {
-		cb_ops->done("Failed to set up BIO", cb_arg);
+	bev = conn_stash_get_bev(https->conn_stash, host, port);
+	if (bev == NULL) {
+		cb_ops->done("Failed to set up connection", cb_arg);
 		free(request);
 		return;
 	}
-
-	BIO_set_nbio(bio, 1);
-	BIO_set_conn_hostname(bio, host);
-	BIO_set_conn_int_port(bio, &port);
-
-	ssl = SSL_new(https->ssl_ctx);
-	if (ssl == NULL) {
-		BIO_free(bio);
-		cb_ops->done("Failed to set up SSL", cb_arg);
-		free(request);
-		return;
-	}
-
-	SSL_set_bio(ssl, bio, bio);
-	SSL_connect(ssl);
-
-
-	bev = bufferevent_openssl_socket_new(https->event_base, -1, ssl,
-					     BUFFEREVENT_SSL_CONNECTING,
-					     BEV_OPT_CLOSE_ON_FREE);
 
 	bufferevent_setcb(bev, cb_read, cb_write, cb_event, request);
 }
