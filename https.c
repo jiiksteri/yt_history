@@ -157,6 +157,41 @@ static int read_chunk_size(struct request_ctx *req, struct bufferevent *bev)
 	return err;
 }
 
+static const char *pretty_state(char *buf, size_t len, int state)
+{
+	switch (state) {
+	case READ_STATUS: snprintf(buf, len, "READ_STATUS"); break;
+	case READ_HEADERS: snprintf(buf, len, "READ_HEADERS"); break;
+	case READ_BODY: snprintf(buf, len, "READ_BODY"); break;
+	default: snprintf(buf, len, "UNKNWN(%d)", state); break;
+	}
+	return buf;
+}
+
+static void set_read_state(struct request_ctx *req, int state)
+{
+	char s1[32];
+	char s2[32];
+
+	if (verbose_adjust_level(0) >= VERBOSE) {
+		verbose(VERBOSE, "%s(): %s -> %s\n", __func__,
+			pretty_state(s1, sizeof(s1), req->read_state),
+			pretty_state(s2, sizeof(s2), state));
+	}
+
+	req->read_state = state;
+
+}
+
+static void request_done(struct request_ctx *req, struct bufferevent *bev)
+{
+	req->cb_ops->done(req->error, req->cb_arg);
+	(void)BIO_set_close(SSL_get_wbio(bufferevent_openssl_get_ssl(bev)), 1);
+	bufferevent_free(bev);
+	free(req->status_line);
+	free(req);
+}
+
 static void drain_body(struct request_ctx *req, struct bufferevent *bev)
 {
 	struct evbuffer *buf;
@@ -224,31 +259,6 @@ static void header_keyval(char **key, char **val, char *line)
 	*val = &line[i];
 }
 
-static const char *pretty_state(char *buf, size_t len, int state)
-{
-	switch (state) {
-	case READ_STATUS: snprintf(buf, len, "READ_STATUS"); break;
-	case READ_HEADERS: snprintf(buf, len, "READ_HEADERS"); break;
-	case READ_BODY: snprintf(buf, len, "READ_BODY"); break;
-	default: snprintf(buf, len, "UNKNWN(%d)", state); break;
-	}
-	return buf;
-}
-
-static void set_read_state(struct request_ctx *req, int state)
-{
-	char s1[32];
-	char s2[32];
-
-	if (verbose_adjust_level(0) >= VERBOSE) {
-		verbose(VERBOSE, "%s(): %s -> %s\n", __func__,
-			pretty_state(s1, sizeof(s1), req->read_state),
-			pretty_state(s2, sizeof(s2), state));
-	}
-
-	req->read_state = state;
-
-}
 
 static void handle_header(struct request_ctx *req, const char *key, const char *val)
 {
@@ -265,7 +275,6 @@ static void handle_header(struct request_ctx *req, const char *key, const char *
 		req->cb_ops->response_header(key, val, req->cb_arg);
 	}
 }
-
 
 static void cb_read(struct bufferevent *bev, void *arg)
 {
@@ -315,15 +324,6 @@ static void store_remote_error(struct request_ctx *req)
 		 req->host, req->status_line);
 	buf[sizeof(buf)-1] = '\0';
 	req->error = strdup(buf);
-}
-
-static void request_done(struct request_ctx *req, struct bufferevent *bev)
-{
-	req->cb_ops->done(req->error, req->cb_arg);
-	(void)BIO_set_close(SSL_get_wbio(bufferevent_openssl_get_ssl(bev)), 1);
-	bufferevent_free(bev);
-	free(req->status_line);
-	free(req);
 }
 
 
@@ -429,6 +429,15 @@ void https_request(struct https_engine *https,
 		cb_ops->done("Out of memory", cb_arg);
 		return;
 	}
+	memset(request, 0, sizeof(*request));
+	request->method = method;
+	request->host = host;
+	request->port = port;
+	request->path = path;
+	request->access_token = access_token;
+	request->request_body = body;
+	request->cb_ops = cb_ops;
+	request->cb_arg = cb_arg;
 
 	bio = BIO_new(BIO_s_connect());
 	if (bio == NULL) {
@@ -456,16 +465,6 @@ void https_request(struct https_engine *https,
 	bev = bufferevent_openssl_socket_new(https->event_base, -1, ssl,
 					     BUFFEREVENT_SSL_CONNECTING,
 					     BEV_OPT_CLOSE_ON_FREE);
-
-	memset(request, 0, sizeof(*request));
-	request->method = method;
-	request->host = host;
-	request->port = port;
-	request->path = path;
-	request->access_token = access_token;
-	request->request_body = body;
-	request->cb_ops = cb_ops;
-	request->cb_arg = cb_arg;
 
 	bufferevent_setcb(bev, cb_read, cb_write, cb_event, request);
 }
