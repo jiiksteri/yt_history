@@ -353,7 +353,7 @@ static void submit_request(struct bufferevent *bev, struct request_ctx *req)
 	evbuffer_add_printf(bufferevent_get_output(bev),
 			    "%s %s HTTP/1.1\r\n"
 			    "Host: %s\r\n"
-			    "Connection: close\r\n",
+			    "Connection: Keep-Alive\r\n",
 			    req->method,
 			    req->path,
 			    req->host);
