@@ -392,7 +392,6 @@ static void cb_event(struct bufferevent *bev, short what, void *arg)
 	struct request_ctx *req = arg;
 	switch (what & ~(BEV_EVENT_READING|BEV_EVENT_WRITING)) {
 	case BEV_EVENT_CONNECTED:
-		submit_request(bev, req);
 		break;
 
 	case BEV_EVENT_ERROR:
@@ -474,4 +473,6 @@ void https_request(struct https_engine *https,
 	}
 
 	bufferevent_setcb(bev, cb_read, cb_write, cb_event, request);
+	submit_request(bev, request);
+
 }
