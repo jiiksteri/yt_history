@@ -136,6 +136,7 @@ static int read_chunk_size(struct request_ctx *req, struct bufferevent *bev)
 		line = read_line(bev, &n);
 	} while (line != NULL && *line == '\0');
 
+	err = 0;
 	if (line != NULL) {
 		errno = 0;
 		val = strtoul(line, &eptr, 16);
