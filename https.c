@@ -348,45 +348,51 @@ static void store_remote_error(struct request_ctx *req)
 	req->error = strdup(buf);
 }
 
+static void submit_request(struct bufferevent *bev, struct request_ctx *req)
+{
+	evbuffer_add_printf(bufferevent_get_output(bev),
+			    "%s %s HTTP/1.1\r\n"
+			    "Host: %s\r\n"
+			    "Connection: close\r\n",
+			    req->method,
+			    req->path,
+			    req->host);
+
+	if (req->access_token != NULL) {
+		evbuffer_add_printf(bufferevent_get_output(bev),
+				    "Authorization: Bearer %s\r\n",
+				    req->access_token);
+	}
+
+	if (strcmp(req->method, "POST") == 0) {
+		evbuffer_add_printf(bufferevent_get_output(bev),
+				    "Content-Type: application/x-www-form-urlencoded\r\n");
+	}
+
+	if (req->request_body != NULL) {
+		evbuffer_add_printf(bufferevent_get_output(bev),
+				    "Content-Length: %zd\r\n",
+				    evbuffer_get_length(req->request_body));
+	}
+
+	evbuffer_add_printf(bufferevent_get_output(bev), "\r\n");
+
+	if (req->request_body != NULL) {
+		evbuffer_add_buffer(bufferevent_get_output(bev),
+				    req->request_body);
+	}
+
+	bufferevent_enable(bev, EV_READ|EV_WRITE);
+
+}
+
 
 static void cb_event(struct bufferevent *bev, short what, void *arg)
 {
 	struct request_ctx *req = arg;
 	switch (what & ~(BEV_EVENT_READING|BEV_EVENT_WRITING)) {
 	case BEV_EVENT_CONNECTED:
-		evbuffer_add_printf(bufferevent_get_output(bev),
-				    "%s %s HTTP/1.1\r\n"
-				    "Host: %s\r\n"
-				    "Connection: close\r\n",
-				    req->method,
-				    req->path,
-				    req->host);
-
-		if (req->access_token != NULL) {
-			evbuffer_add_printf(bufferevent_get_output(bev),
-					    "Authorization: Bearer %s\r\n",
-					    req->access_token);
-		}
-
-		if (strcmp(req->method, "POST") == 0) {
-			evbuffer_add_printf(bufferevent_get_output(bev),
-					    "Content-Type: application/x-www-form-urlencoded\r\n");
-		}
-
-		if (req->request_body != NULL) {
-			evbuffer_add_printf(bufferevent_get_output(bev),
-					    "Content-Length: %zd\r\n",
-					    evbuffer_get_length(req->request_body));
-		}
-
-		evbuffer_add_printf(bufferevent_get_output(bev), "\r\n");
-
-		if (req->request_body != NULL) {
-			evbuffer_add_buffer(bufferevent_get_output(bev),
-					    req->request_body);
-		}
-
-		bufferevent_enable(bev, EV_READ|EV_WRITE);
+		submit_request(bev, req);
 		break;
 
 	case BEV_EVENT_ERROR:
