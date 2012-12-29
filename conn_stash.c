@@ -127,6 +127,18 @@ static SSL *get_stashed_conn(struct conn_stash *stash, const char *host, int por
 
 }
 
+static void fill_slot_info(struct conn_slot *slot, SSL *ssl)
+{
+	BIO *bio;
+
+	bio = SSL_get_wbio(ssl);
+
+	slot->host = BIO_get_conn_hostname(bio);
+	BIO_ctrl(bio, BIO_C_GET_CONNECT, 3, &slot->port);
+
+	slot->ssl = ssl;
+}
+
 static void put_stashed_conn(struct conn_stash *stash, SSL *ssl)
 {
 	struct conn_slot **slotp;
@@ -137,13 +149,29 @@ static void put_stashed_conn(struct conn_stash *stash, SSL *ssl)
 		(*slotp)->status = FREE;
 	} else {
 		*slotp = malloc(sizeof(**slotp));
-		memset(*slotp, 0, sizeof(**slotp));
-		(*slotp)->host = BIO_get_conn_hostname(SSL_get_wbio(ssl));
-		/* Aw, f it. The following would just return 1. */
-		/* (*slotp)->port = BIO_get_conn_int_port(SSL_get_wbio(ssl)); */
-		BIO_ctrl(SSL_get_wbio(ssl), BIO_C_GET_CONNECT, 3, &(*slotp)->port);
-		(*slotp)->ssl = ssl;
+		fill_slot_info(*slotp, ssl);
+		(*slotp)->next = NULL;
 		(*slotp)->status = FREE;
+	}
+}
+
+static void replace_stashed_conn(struct conn_stash *stash, SSL *old, SSL *new)
+{
+	struct conn_slot **slotp, **prevp;
+
+	slotp = prevp = &stash->conns;
+	while (*slotp && (*slotp)->ssl != old) {
+		prevp = slotp;
+		slotp = &(*slotp)->next;
+	}
+
+	if (*slotp) {
+		if (new != NULL) {
+			fill_slot_info(*slotp, new);
+		} else {
+			*prevp = (*slotp)->next;
+			free(*slotp);
+		}
 	}
 }
 
@@ -180,4 +208,53 @@ void conn_stash_put_bev(struct conn_stash *stash, struct bufferevent *bev)
 	put_stashed_conn(stash, bufferevent_openssl_get_ssl(bev));
 	/* (void)BIO_set_close(SSL_get_wbio(bufferevent_openssl_get_ssl(bev)), 1); */
 	bufferevent_free(bev);
+}
+
+
+int conn_stash_reconnect(struct conn_stash *stash, struct bufferevent **bevp)
+{
+	SSL *old_ssl;
+	SSL *ssl;
+	BIO *bio;
+	const char *host;
+	int port;
+	int err;
+
+	ssl = bufferevent_openssl_get_ssl(*bevp);
+	bio = SSL_get_wbio(ssl);
+
+	BIO_ctrl(bio, BIO_C_GET_CONNECT, 0, &host);
+	BIO_ctrl(bio, BIO_C_GET_CONNECT, 3, &port);
+
+	verbose(NORMAL, "%s(): reconnecting to %s:%d\n",
+		__func__, host, port);
+
+	old_ssl = ssl;
+
+	ssl = fresh_conn(stash, host, port);
+
+	replace_stashed_conn(stash, old_ssl, ssl);
+
+	if (ssl != NULL) {
+		verbose(VERBOSE, "%s(): reconnected to %s:%d\n",
+			__func__, host, port);
+
+		/* get rid of the old bufferevent */
+		bufferevent_free(*bevp);
+
+		*bevp = bufferevent_openssl_socket_new(stash->event_base, -1, ssl,
+						       BUFFEREVENT_SSL_CONNECTING,
+						       0);
+		err = 0;
+	} else {
+		verbose(ERROR, "%s(): could not connect to %s:%d: %d\n",
+			__func__, host, port, errno, strerror(errno));
+		err = ENOTCONN;
+	}
+
+	/* Get rid of the old SSL leftovers */
+	(void)BIO_set_close(bio, 1);
+	SSL_free(old_ssl);
+
+	return err;
 }

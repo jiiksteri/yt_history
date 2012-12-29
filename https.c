@@ -401,6 +401,16 @@ static void submit_request(struct bufferevent *bev, struct request_ctx *req)
 
 }
 
+static void reset_read_state(struct request_ctx *req)
+{
+	req->read_state = READ_NONE;
+	req->chunked = 0;
+	req->chunk_size = 0;
+	req->chunk_left = 0;
+	req->content_length = 0;
+}
+
+static void restart_request(struct request_ctx *req, struct bufferevent *bev);
 
 static void cb_event(struct bufferevent *bev, short what, void *arg)
 {
@@ -417,6 +427,14 @@ static void cb_event(struct bufferevent *bev, short what, void *arg)
 			"%s(): last socket error is %d (%s)\n",
 			__func__, sock_err,
 			evutil_socket_error_to_string(sock_err));
+
+		if (req->read_state == READ_NONE) {
+			verbose(NORMAL,
+				"%s(): error reported before nothing read."
+				" Restarting request\n", __func__);
+			restart_request(req, bev);
+			return;
+		}
 
 		if (req->status != 0) {
 			store_request_error(req, "%s hates me: %s",
@@ -437,6 +455,33 @@ static void cb_event(struct bufferevent *bev, short what, void *arg)
 	}
 }
 
+static void clear_buffer(struct evbuffer *buf)
+{
+	evbuffer_drain(buf, evbuffer_get_length(buf));
+}
+
+static void restart_request(struct request_ctx *req, struct bufferevent *bev)
+{
+	int err;
+
+	bufferevent_disable(bev, EV_READ|EV_WRITE);
+	err = conn_stash_reconnect(req->conn_stash, &bev);
+	if (err == 0) {
+		/* This is rather fragile when someone decides
+		 * to add bits into struct request_ctx. We'll need
+		 * to know what to clear. So it could use a bit of
+		 * restructuring
+		 */
+		clear_buffer(bufferevent_get_output(bev));
+		clear_buffer(bufferevent_get_input(bev));
+		reset_read_state(req);
+		bufferevent_setcb(bev, cb_read, cb_write, cb_event, req);
+		submit_request(bev, req);
+	} else {
+		store_request_error(req, "%s(): %s", __func__, strerror(err));
+		request_done(req, bev);
+	}
+}
 
 static int setup_request_body(struct request_ctx *req, struct evbuffer *body)
 {

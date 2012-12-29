@@ -15,4 +15,6 @@ struct bufferevent *conn_stash_get_bev(struct conn_stash *stash,
 
 void conn_stash_put_bev(struct conn_stash *stash, struct bufferevent *bev);
 
+int conn_stash_reconnect(struct conn_stash *stash, struct bufferevent **bevp);
+
 #endif
