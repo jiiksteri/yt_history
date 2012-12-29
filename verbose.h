@@ -10,6 +10,6 @@ enum verbosity_level {
 
 int verbose_adjust_level(int v);
 
-void verbose(enum verbosity_level level, const char *fmt, ...);
+void __attribute__((format(printf,2,3))) verbose(enum verbosity_level level, const char *fmt, ...);
 
 #endif

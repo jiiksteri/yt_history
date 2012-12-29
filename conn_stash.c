@@ -263,7 +263,7 @@ int conn_stash_reconnect(struct conn_stash *stash, struct bufferevent **bevp)
 						       0);
 		err = 0;
 	} else {
-		verbose(ERROR, "%s(): could not connect to %s:%d: %d\n",
+		verbose(ERROR, "%s(): could not connect to %s:%d: %d %s\n",
 			__func__, host, port, errno, strerror(errno));
 		err = ENOTCONN;
 	}
