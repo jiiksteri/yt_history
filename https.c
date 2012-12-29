@@ -64,7 +64,8 @@ struct request_ctx {
 
 	const char *access_token;
 
-	struct evbuffer *request_body;
+	char *request_body;
+	size_t request_body_length;
 
 
 	struct https_cb_ops *cb_ops;
@@ -202,6 +203,7 @@ static void request_done(struct request_ctx *req, struct bufferevent *bev)
 	req->cb_ops->done(req->error, req->cb_arg);
 	conn_stash_put_bev(req->conn_stash, bev);
 	free(req->status_line);
+	free(req->request_body);
 	free(req);
 }
 
@@ -382,14 +384,17 @@ static void submit_request(struct bufferevent *bev, struct request_ctx *req)
 	if (req->request_body != NULL) {
 		evbuffer_add_printf(bufferevent_get_output(bev),
 				    "Content-Length: %zd\r\n",
-				    evbuffer_get_length(req->request_body));
+				    req->request_body_length);
 	}
 
 	evbuffer_add_printf(bufferevent_get_output(bev), "\r\n");
 
 	if (req->request_body != NULL) {
-		evbuffer_add_buffer(bufferevent_get_output(bev),
-				    req->request_body);
+		evbuffer_add_reference(bufferevent_get_output(bev),
+				       req->request_body,
+				       req->request_body_length,
+				       (evbuffer_ref_cleanup_cb)NULL,
+				       NULL);
 	}
 
 	bufferevent_enable(bev, EV_READ|EV_WRITE);
@@ -433,6 +438,23 @@ static void cb_event(struct bufferevent *bev, short what, void *arg)
 }
 
 
+static int setup_request_body(struct request_ctx *req, struct evbuffer *body)
+{
+	size_t len;
+
+	if (body != NULL) {
+		len = evbuffer_get_length(body);
+		req->request_body = malloc(len);
+		if (req->request_body == NULL) {
+			return ENOMEM;
+		}
+		evbuffer_copyout(body, req->request_body, len);
+		req->request_body_length = len;
+	}
+	return 0;
+}
+
+
 void https_request(struct https_engine *https,
 		   const char *host, int port,
 		   const char *method, const char *path,
@@ -454,7 +476,7 @@ void https_request(struct https_engine *https,
 	request->port = port;
 	request->path = path;
 	request->access_token = access_token;
-	request->request_body = body;
+	setup_request_body(request, body);
 	request->cb_ops = cb_ops;
 	request->cb_arg = cb_arg;
 	request->conn_stash = https->conn_stash;
