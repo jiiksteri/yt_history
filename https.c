@@ -25,7 +25,8 @@ struct https_engine {
 	struct event_base *event_base;
 };
 
-int https_engine_init(struct https_engine **httpsp, struct event_base *event_base)
+int https_engine_init(struct https_engine **httpsp, struct event_base *event_base,
+		      int no_keepalive)
 {
 	int err;
 
@@ -36,7 +37,7 @@ int https_engine_init(struct https_engine **httpsp, struct event_base *event_bas
 
 	memset(https, 0, sizeof(*https));
 
-	err = conn_stash_init(&https->conn_stash, event_base);
+	err = conn_stash_init(&https->conn_stash, event_base, no_keepalive);
 	if (err != 0) {
 		free(https);
 		return errno;
@@ -365,10 +366,14 @@ static void submit_request(struct bufferevent *bev, struct request_ctx *req)
 	evbuffer_add_printf(bufferevent_get_output(bev),
 			    "%s %s HTTP/1.1\r\n"
 			    "Host: %s\r\n"
-			    "Connection: Keep-Alive\r\n",
+			    "Connection: %s\r\n",
 			    req->method,
 			    req->path,
-			    req->host);
+			    req->host,
+			    conn_stash_is_keepalive(req->conn_stash)
+			    ? "Keep-Alive"
+			    : "close");
+
 
 	if (req->access_token != NULL) {
 		evbuffer_add_printf(bufferevent_get_output(bev),
@@ -412,6 +417,17 @@ static void reset_read_state(struct request_ctx *req)
 
 static void restart_request(struct request_ctx *req, struct bufferevent *bev);
 
+static void do_store_request_error(struct request_ctx *req, int sock_err)
+{
+	if (req->status != 0) {
+		store_request_error(req, "%s hates me: %s",
+				    req->host, req->status_line);
+	} else {
+		store_request_error(req, "Socket error. errno %d (%s)",
+				    sock_err, evutil_socket_error_to_string(sock_err));
+	}
+}
+
 static void cb_event(struct bufferevent *bev, short what, void *arg)
 {
 	struct request_ctx *req = arg;
@@ -434,14 +450,16 @@ static void cb_event(struct bufferevent *bev, short what, void *arg)
 				" Restarting request\n", __func__);
 			restart_request(req, bev);
 			return;
-		}
 
-		if (req->status != 0) {
-			store_request_error(req, "%s hates me: %s",
-					    req->host, req->status_line);
-		} else {
-			store_request_error(req, "Socket error. errno %d (%s)",
-					    sock_err, evutil_socket_error_to_string(sock_err));
+		} else if (req->status != 200) {
+			/* This needs better heuristics. We just
+			 * handle the case of "error when we have
+			 * read response" differently :(
+			 *
+			 * We should at least be able to determine
+			 * that we've consumed the whole response.
+			 */
+			do_store_request_error(req, sock_err);
 		}
 
 		request_done(req, bev);

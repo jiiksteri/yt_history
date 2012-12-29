@@ -6,7 +6,9 @@
 
 struct https_engine;
 
-int https_engine_init(struct https_engine **https, struct event_base *event_base);
+int https_engine_init(struct https_engine **https, struct event_base *event_base,
+		      int no_keepalive);
+
 void https_engine_destroy(struct https_engine *https);
 
 struct https_cb_ops {

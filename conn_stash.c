@@ -28,9 +28,12 @@ struct conn_stash {
 	SSL_CTX *ssl_ctx;
 
 	struct conn_slot *conns;
+
+	int no_keepalive;
 };
 
-int conn_stash_init(struct conn_stash **stashp, struct event_base *event_base)
+int conn_stash_init(struct conn_stash **stashp, struct event_base *event_base,
+		    int no_keepalive)
 {
 
 	struct conn_stash *stash;
@@ -54,9 +57,16 @@ int conn_stash_init(struct conn_stash **stashp, struct event_base *event_base)
 	}
 
 	stash->event_base = event_base;
+	stash->no_keepalive = no_keepalive;
 
 	*stashp = stash;
 	return 0;
+}
+
+static void kill_conn(SSL *ssl)
+{
+	(void)BIO_set_close(SSL_get_wbio(ssl), 1);
+	SSL_free(ssl);
 }
 
 void conn_stash_destroy(struct conn_stash *stash)
@@ -65,8 +75,7 @@ void conn_stash_destroy(struct conn_stash *stash)
 
 	for (slot = stash->conns; slot;) {
 		tmp = slot->next;
-		(void)BIO_set_close(SSL_get_wbio(slot->ssl), 1);
-		SSL_free(slot->ssl);
+		kill_conn(slot->ssl);
 		free(slot);
 		slot = tmp;
 	}
@@ -205,8 +214,15 @@ struct bufferevent *conn_stash_get_bev(struct conn_stash *stash,
 
 void conn_stash_put_bev(struct conn_stash *stash, struct bufferevent *bev)
 {
-	put_stashed_conn(stash, bufferevent_openssl_get_ssl(bev));
-	/* (void)BIO_set_close(SSL_get_wbio(bufferevent_openssl_get_ssl(bev)), 1); */
+	SSL *ssl;
+
+	ssl = bufferevent_openssl_get_ssl(bev);
+
+	if (stash->no_keepalive) {
+		kill_conn(ssl);
+	} else {
+		put_stashed_conn(stash, ssl);
+	}
 	bufferevent_free(bev);
 }
 
@@ -257,4 +273,10 @@ int conn_stash_reconnect(struct conn_stash *stash, struct bufferevent **bevp)
 	SSL_free(old_ssl);
 
 	return err;
+}
+
+
+int conn_stash_is_keepalive(struct conn_stash *stash)
+{
+	return !stash->no_keepalive;
 }
