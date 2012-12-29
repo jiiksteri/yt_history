@@ -339,13 +339,18 @@ static void cb_read(struct bufferevent *bev, void *arg)
 
 }
 
-static void store_remote_error(struct request_ctx *req)
+static __attribute__((format(printf,2,3))) void store_request_error(struct request_ctx *req,
+								    const char *fmt, ...)
 {
 	char buf[512];
-	snprintf(buf, sizeof(buf), "%s hates me: %s",
-		 req->host, req->status_line);
-	buf[sizeof(buf)-1] = '\0';
+	va_list ap;
+
+	va_start(ap, fmt);
+	vsnprintf(buf, sizeof(buf), fmt, ap);
+	va_end(ap);
+
 	req->error = strdup(buf);
+
 }
 
 static void submit_request(struct bufferevent *bev, struct request_ctx *req)
@@ -390,43 +395,27 @@ static void submit_request(struct bufferevent *bev, struct request_ctx *req)
 static void cb_event(struct bufferevent *bev, short what, void *arg)
 {
 	struct request_ctx *req = arg;
+	int sock_err;
+
 	switch (what & ~(BEV_EVENT_READING|BEV_EVENT_WRITING)) {
 	case BEV_EVENT_CONNECTED:
 		break;
 
 	case BEV_EVENT_ERROR:
+		sock_err = EVUTIL_SOCKET_ERROR();
 		verbose(ERROR,
-			"%s(): Received error event. I have status %d,"
-			" so it's probably %s\n", __func__, req->status,
-			req->status == 200
-			? "a dirty shutdown"
-			: "something serious");
+			"%s(): last socket error is %d (%s)\n",
+			__func__, sock_err,
+			evutil_socket_error_to_string(sock_err));
 
-		/* For some reason, one that we get to figure out,
-		 * we get a BEV_EVENT_ERROR once the remote end is
-		 * done with us, even as it just sent a successful
-		 * reply.
-		 *
-		 * If the response code was ok and we managed to
-		 * read anything at all, skip reporting the error
-		 * to the caller and let it deal with the possibly
-		 * broken response.
-		 *
-		 * A bit of debugging shows that this is most likely
-		 * the remote end doing a "dirty shutdown".
-		 *
-		 * A more recent libevent2 would have a way of quiescing
-		 * this via
-		 *
-		 *   bufferevent_openssl_set_allow_dirty_shutdown()
-		 *
-		 * and we'd only get BEV_EVENT_EOF.
-		 *
-		 * But I'm not at all convinced that's the whole story.
-		 */
-		if (req->status != 200) {
-			store_remote_error(req);
+		if (req->status != 0) {
+			store_request_error(req, "%s hates me: %s",
+					    req->host, req->status_line);
+		} else {
+			store_request_error(req, "Socket error. errno %d (%s)",
+					    sock_err, evutil_socket_error_to_string(sock_err));
 		}
+
 		request_done(req, bev);
 		break;
 	case BEV_EVENT_EOF:
