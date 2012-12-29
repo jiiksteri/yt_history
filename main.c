@@ -28,6 +28,8 @@ struct app {
 	struct event *interrupt_event;
 
 	int port;
+
+	int no_keepalive;
 };
 
 
@@ -110,8 +112,11 @@ int main(int argc, char **argv)
 
 	memset(&app, 0, sizeof(app));
 
-	while ((opt = getopt(argc, argv, "p:v")) != -1) {
+	while ((opt = getopt(argc, argv, "np:v")) != -1) {
 		switch (opt) {
+		case 'n':
+			app.no_keepalive = 1;
+			break;
 		case 'p':
 			app.port = atoi(optarg);
 			break;
@@ -162,7 +167,7 @@ int main(int argc, char **argv)
 		goto out_cleanup;
 	}
 
-	if (https_engine_init(&app.https, app.base) != 0) {
+	if (https_engine_init(&app.https, app.base, app.no_keepalive) != 0) {
 		err = errno;
 		fprintf(stderr, "https_init(): %s\n", strerror(err));
 		goto out_cleanup;

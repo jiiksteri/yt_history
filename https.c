@@ -15,18 +15,21 @@
 
 #include <event2/event.h>
 #include <event2/buffer.h>
-#include <event2/bufferevent_ssl.h>
 
-#include <openssl/ssl.h>
 #include "verbose.h"
 
+#include "conn_stash.h"
+
 struct https_engine {
-	SSL_CTX *ssl_ctx;
+	struct conn_stash *conn_stash;
 	struct event_base *event_base;
 };
 
-int https_engine_init(struct https_engine **httpsp, struct event_base *event_base)
+int https_engine_init(struct https_engine **httpsp, struct event_base *event_base,
+		      int no_keepalive)
 {
+	int err;
+
 	struct https_engine *https = malloc(sizeof(*https));
 	if (https == NULL) {
 		return errno;
@@ -34,16 +37,10 @@ int https_engine_init(struct https_engine **httpsp, struct event_base *event_bas
 
 	memset(https, 0, sizeof(*https));
 
-	SSL_load_error_strings();
-	SSL_library_init();
-
-	https->ssl_ctx = SSL_CTX_new(SSLv23_method());
-	if (https->ssl_ctx == NULL) {
-		/* Can't be arsed to do the full error stack parsing
-		 * nonsense.
-		 */
+	err = conn_stash_init(&https->conn_stash, event_base, no_keepalive);
+	if (err != 0) {
 		free(https);
-		return ENOMEM;
+		return errno;
 	}
 
 	https->event_base = event_base;
@@ -55,7 +52,7 @@ int https_engine_init(struct https_engine **httpsp, struct event_base *event_bas
 
 void https_engine_destroy(struct https_engine *https)
 {
-	SSL_CTX_free(https->ssl_ctx);
+	conn_stash_destroy(https->conn_stash);
 	free(https);
 }
 
@@ -68,7 +65,8 @@ struct request_ctx {
 
 	const char *access_token;
 
-	struct evbuffer *request_body;
+	char *request_body;
+	size_t request_body_length;
 
 
 	struct https_cb_ops *cb_ops;
@@ -76,7 +74,7 @@ struct request_ctx {
 
 	char *error;
 
-	enum { READ_STATUS, READ_HEADERS, READ_BODY } read_state;
+	enum { READ_NONE, READ_STATUS, READ_HEADERS, READ_BODY, READ_DONE } read_state;
 
 	int status;
 	char *status_line;
@@ -87,6 +85,8 @@ struct request_ctx {
 	int chunked;
 	size_t chunk_size;
 	size_t chunk_left;
+
+	struct conn_stash *conn_stash;
 
 };
 
@@ -157,6 +157,57 @@ static int read_chunk_size(struct request_ctx *req, struct bufferevent *bev)
 	return err;
 }
 
+static const char *pretty_state(char *buf, size_t len, int state)
+{
+	switch (state) {
+	case READ_NONE: snprintf(buf, len, "READ_NONE"); break;
+	case READ_STATUS: snprintf(buf, len, "READ_STATUS"); break;
+	case READ_HEADERS: snprintf(buf, len, "READ_HEADERS"); break;
+	case READ_BODY: snprintf(buf, len, "READ_BODY"); break;
+	case READ_DONE: snprintf(buf, len, "READ_DONE"); break;
+	default: snprintf(buf, len, "UNKNWN(%d)", state); break;
+	}
+	return buf;
+}
+
+static void set_read_state(struct request_ctx *req, int state)
+{
+	char s1[32];
+	char s2[32];
+
+	if (verbose_adjust_level(0) >= VERBOSE) {
+		verbose(VERBOSE, "%s(): %s -> %s\n", __func__,
+			pretty_state(s1, sizeof(s1), req->read_state),
+			pretty_state(s2, sizeof(s2), state));
+	}
+
+	req->read_state = state;
+
+}
+
+static void flush_input(struct request_ctx *req, struct evbuffer *buf)
+{
+	int len;
+
+	while ((len = evbuffer_get_length(buf)) > 0) {
+		verbose(VERBOSE, "%s(): input bytes left: %d\n",
+			__func__, len);
+		req->cb_ops->read(buf, req->cb_arg);
+	}
+}
+
+static void request_done(struct request_ctx *req, struct bufferevent *bev)
+{
+	/* Force the remaining bytes down our consumer's throat. */
+	flush_input(req, bufferevent_get_input(bev));
+
+	req->cb_ops->done(req->error, req->cb_arg);
+	conn_stash_put_bev(req->conn_stash, bev);
+	free(req->status_line);
+	free(req->request_body);
+	free(req);
+}
+
 static void drain_body(struct request_ctx *req, struct bufferevent *bev)
 {
 	struct evbuffer *buf;
@@ -174,7 +225,7 @@ static void drain_body(struct request_ctx *req, struct bufferevent *bev)
 
 	saved = NULL;
 	before = evbuffer_get_length(buf);
-	if (req->chunked && req->chunk_left < before) {
+	if (req->chunked && req->chunk_size > 0 && req->chunk_left < before) {
 		/*
 		 * Save the real buffer away and give the callback
 		 * a temporary one, just the chunk that remains.
@@ -190,7 +241,7 @@ static void drain_body(struct request_ctx *req, struct bufferevent *bev)
 	after = evbuffer_get_length(buf);
 	req->consumed += before - after;
 	req->chunk_left -= (before - after);
-	if (req->chunk_left == 0) {
+	if (req->chunk_size > 0 && req->chunk_left == 0) {
 		/* We've consumed the whole chunk.
 		 * Signal that we need another one.
 		 */
@@ -201,6 +252,11 @@ static void drain_body(struct request_ctx *req, struct bufferevent *bev)
 		/* saved is actually the buffer in bev */
 		evbuffer_prepend_buffer(saved, buf);
 		evbuffer_free(buf);
+	}
+
+	if ((req->chunked && req->chunk_size == 0) ||
+	    (req->content_length > 0 && req->consumed == req->content_length)) {
+		set_read_state(req, READ_DONE);
 	}
 
 
@@ -224,31 +280,6 @@ static void header_keyval(char **key, char **val, char *line)
 	*val = &line[i];
 }
 
-static const char *pretty_state(char *buf, size_t len, int state)
-{
-	switch (state) {
-	case READ_STATUS: snprintf(buf, len, "READ_STATUS"); break;
-	case READ_HEADERS: snprintf(buf, len, "READ_HEADERS"); break;
-	case READ_BODY: snprintf(buf, len, "READ_BODY"); break;
-	default: snprintf(buf, len, "UNKNWN(%d)", state); break;
-	}
-	return buf;
-}
-
-static void set_read_state(struct request_ctx *req, int state)
-{
-	char s1[32];
-	char s2[32];
-
-	if (verbose_adjust_level(0) >= VERBOSE) {
-		verbose(VERBOSE, "%s(): %s -> %s\n", __func__,
-			pretty_state(s1, sizeof(s1), req->read_state),
-			pretty_state(s2, sizeof(s2), state));
-	}
-
-	req->read_state = state;
-
-}
 
 static void handle_header(struct request_ctx *req, const char *key, const char *val)
 {
@@ -266,12 +297,15 @@ static void handle_header(struct request_ctx *req, const char *key, const char *
 	}
 }
 
-
 static void cb_read(struct bufferevent *bev, void *arg)
 {
 	struct request_ctx *req = arg;
 	char *line;
 	size_t n;
+
+	if (req->read_state == READ_NONE) {
+		req->read_state = READ_STATUS;
+	}
 
 	while (req->read_state == READ_STATUS || req->read_state == READ_HEADERS) {
 
@@ -303,103 +337,131 @@ static void cb_read(struct bufferevent *bev, void *arg)
 
 	}
 
-	if (req->read_state == READ_BODY) {
+	while (req->read_state == READ_BODY && evbuffer_get_length(bufferevent_get_input(bev)) > 0) {
 		drain_body(req, bev);
 	}
+
+	if (req->read_state == READ_DONE) {
+		request_done(req, bev);
+	}
+
 }
 
-static void store_remote_error(struct request_ctx *req)
+static __attribute__((format(printf,2,3))) void store_request_error(struct request_ctx *req,
+								    const char *fmt, ...)
 {
 	char buf[512];
-	snprintf(buf, sizeof(buf), "%s hates me: %s",
-		 req->host, req->status_line);
-	buf[sizeof(buf)-1] = '\0';
+	va_list ap;
+
+	va_start(ap, fmt);
+	vsnprintf(buf, sizeof(buf), fmt, ap);
+	va_end(ap);
+
 	req->error = strdup(buf);
+
 }
 
-static void request_done(struct request_ctx *req, struct bufferevent *bev)
+static void submit_request(struct bufferevent *bev, struct request_ctx *req)
 {
-	req->cb_ops->done(req->error, req->cb_arg);
-	(void)BIO_set_close(SSL_get_wbio(bufferevent_openssl_get_ssl(bev)), 1);
-	bufferevent_free(bev);
-	free(req->status_line);
-	free(req);
+	evbuffer_add_printf(bufferevent_get_output(bev),
+			    "%s %s HTTP/1.1\r\n"
+			    "Host: %s\r\n"
+			    "Connection: %s\r\n",
+			    req->method,
+			    req->path,
+			    req->host,
+			    conn_stash_is_keepalive(req->conn_stash)
+			    ? "Keep-Alive"
+			    : "close");
+
+
+	if (req->access_token != NULL) {
+		evbuffer_add_printf(bufferevent_get_output(bev),
+				    "Authorization: Bearer %s\r\n",
+				    req->access_token);
+	}
+
+	if (strcmp(req->method, "POST") == 0) {
+		evbuffer_add_printf(bufferevent_get_output(bev),
+				    "Content-Type: application/x-www-form-urlencoded\r\n");
+	}
+
+	if (req->request_body != NULL) {
+		evbuffer_add_printf(bufferevent_get_output(bev),
+				    "Content-Length: %zd\r\n",
+				    req->request_body_length);
+	}
+
+	evbuffer_add_printf(bufferevent_get_output(bev), "\r\n");
+
+	if (req->request_body != NULL) {
+		evbuffer_add_reference(bufferevent_get_output(bev),
+				       req->request_body,
+				       req->request_body_length,
+				       (evbuffer_ref_cleanup_cb)NULL,
+				       NULL);
+	}
+
+	bufferevent_enable(bev, EV_READ|EV_WRITE);
+
 }
 
+static void reset_read_state(struct request_ctx *req)
+{
+	req->read_state = READ_NONE;
+	req->chunked = 0;
+	req->chunk_size = 0;
+	req->chunk_left = 0;
+	req->content_length = 0;
+}
+
+static void restart_request(struct request_ctx *req, struct bufferevent *bev);
+
+static void do_store_request_error(struct request_ctx *req, int sock_err)
+{
+	if (req->status != 0) {
+		store_request_error(req, "%s hates me: %s",
+				    req->host, req->status_line);
+	} else {
+		store_request_error(req, "Socket error. errno %d (%s)",
+				    sock_err, evutil_socket_error_to_string(sock_err));
+	}
+}
 
 static void cb_event(struct bufferevent *bev, short what, void *arg)
 {
 	struct request_ctx *req = arg;
+	int sock_err;
+
 	switch (what & ~(BEV_EVENT_READING|BEV_EVENT_WRITING)) {
 	case BEV_EVENT_CONNECTED:
-		evbuffer_add_printf(bufferevent_get_output(bev),
-				    "%s %s HTTP/1.1\r\n"
-				    "Host: %s\r\n"
-				    "Connection: close\r\n",
-				    req->method,
-				    req->path,
-				    req->host);
-
-		if (req->access_token != NULL) {
-			evbuffer_add_printf(bufferevent_get_output(bev),
-					    "Authorization: Bearer %s\r\n",
-					    req->access_token);
-		}
-
-		if (strcmp(req->method, "POST") == 0) {
-			evbuffer_add_printf(bufferevent_get_output(bev),
-					    "Content-Type: application/x-www-form-urlencoded\r\n");
-		}
-
-		if (req->request_body != NULL) {
-			evbuffer_add_printf(bufferevent_get_output(bev),
-					    "Content-Length: %zd\r\n",
-					    evbuffer_get_length(req->request_body));
-		}
-
-		evbuffer_add_printf(bufferevent_get_output(bev), "\r\n");
-
-		if (req->request_body != NULL) {
-			evbuffer_add_buffer(bufferevent_get_output(bev),
-					    req->request_body);
-		}
-
-		bufferevent_enable(bev, EV_READ|EV_WRITE);
 		break;
 
 	case BEV_EVENT_ERROR:
+		sock_err = EVUTIL_SOCKET_ERROR();
 		verbose(ERROR,
-			"%s(): Received error event. I have status %d,"
-			" so it's probably %s\n", __func__, req->status,
-			req->status == 200
-			? "a dirty shutdown"
-			: "something serious");
+			"%s(): last socket error is %d (%s)\n",
+			__func__, sock_err,
+			evutil_socket_error_to_string(sock_err));
 
-		/* For some reason, one that we get to figure out,
-		 * we get a BEV_EVENT_ERROR once the remote end is
-		 * done with us, even as it just sent a successful
-		 * reply.
-		 *
-		 * If the response code was ok and we managed to
-		 * read anything at all, skip reporting the error
-		 * to the caller and let it deal with the possibly
-		 * broken response.
-		 *
-		 * A bit of debugging shows that this is most likely
-		 * the remote end doing a "dirty shutdown".
-		 *
-		 * A more recent libevent2 would have a way of quiescing
-		 * this via
-		 *
-		 *   bufferevent_openssl_set_allow_dirty_shutdown()
-		 *
-		 * and we'd only get BEV_EVENT_EOF.
-		 *
-		 * But I'm not at all convinced that's the whole story.
-		 */
-		if (req->status != 200) {
-			store_remote_error(req);
+		if (req->read_state == READ_NONE) {
+			verbose(NORMAL,
+				"%s(): error reported before nothing read."
+				" Restarting request\n", __func__);
+			restart_request(req, bev);
+			return;
+
+		} else if (req->status != 200) {
+			/* This needs better heuristics. We just
+			 * handle the case of "error when we have
+			 * read response" differently :(
+			 *
+			 * We should at least be able to determine
+			 * that we've consumed the whole response.
+			 */
+			do_store_request_error(req, sock_err);
 		}
+
 		request_done(req, bev);
 		break;
 	case BEV_EVENT_EOF:
@@ -409,6 +471,50 @@ static void cb_event(struct bufferevent *bev, short what, void *arg)
 		verbose(ERROR, "%s(): Unhandled event: %d\n", __func__, what);
 		break;
 	}
+}
+
+static void clear_buffer(struct evbuffer *buf)
+{
+	evbuffer_drain(buf, evbuffer_get_length(buf));
+}
+
+static void restart_request(struct request_ctx *req, struct bufferevent *bev)
+{
+	int err;
+
+	bufferevent_disable(bev, EV_READ|EV_WRITE);
+	err = conn_stash_reconnect(req->conn_stash, &bev);
+	if (err == 0) {
+		/* This is rather fragile when someone decides
+		 * to add bits into struct request_ctx. We'll need
+		 * to know what to clear. So it could use a bit of
+		 * restructuring
+		 */
+		clear_buffer(bufferevent_get_output(bev));
+		clear_buffer(bufferevent_get_input(bev));
+		reset_read_state(req);
+		bufferevent_setcb(bev, cb_read, cb_write, cb_event, req);
+		submit_request(bev, req);
+	} else {
+		store_request_error(req, "%s(): %s", __func__, strerror(err));
+		request_done(req, bev);
+	}
+}
+
+static int setup_request_body(struct request_ctx *req, struct evbuffer *body)
+{
+	size_t len;
+
+	if (body != NULL) {
+		len = evbuffer_get_length(body);
+		req->request_body = malloc(len);
+		if (req->request_body == NULL) {
+			return ENOMEM;
+		}
+		evbuffer_copyout(body, req->request_body, len);
+		req->request_body_length = len;
+	}
+	return 0;
 }
 
 
@@ -422,50 +528,30 @@ void https_request(struct https_engine *https,
 {
 	struct request_ctx *request;
 	struct bufferevent *bev;
-	BIO *bio;
-	SSL *ssl;
 
 	if ((request = malloc(sizeof(*request))) == NULL) {
 		cb_ops->done("Out of memory", cb_arg);
 		return;
 	}
-
-	bio = BIO_new(BIO_s_connect());
-	if (bio == NULL) {
-		cb_ops->done("Failed to set up BIO", cb_arg);
-		free(request);
-		return;
-	}
-
-	BIO_set_nbio(bio, 1);
-	BIO_set_conn_hostname(bio, host);
-	BIO_set_conn_int_port(bio, &port);
-
-	ssl = SSL_new(https->ssl_ctx);
-	if (ssl == NULL) {
-		BIO_free(bio);
-		cb_ops->done("Failed to set up SSL", cb_arg);
-		free(request);
-		return;
-	}
-
-	SSL_set_bio(ssl, bio, bio);
-	SSL_connect(ssl);
-
-
-	bev = bufferevent_openssl_socket_new(https->event_base, -1, ssl,
-					     BUFFEREVENT_SSL_CONNECTING,
-					     BEV_OPT_CLOSE_ON_FREE);
-
 	memset(request, 0, sizeof(*request));
 	request->method = method;
 	request->host = host;
 	request->port = port;
 	request->path = path;
 	request->access_token = access_token;
-	request->request_body = body;
+	setup_request_body(request, body);
 	request->cb_ops = cb_ops;
 	request->cb_arg = cb_arg;
+	request->conn_stash = https->conn_stash;
+
+	bev = conn_stash_get_bev(https->conn_stash, host, port);
+	if (bev == NULL) {
+		cb_ops->done("Failed to set up connection", cb_arg);
+		free(request);
+		return;
+	}
 
 	bufferevent_setcb(bev, cb_read, cb_write, cb_event, request);
+	submit_request(bev, request);
+
 }

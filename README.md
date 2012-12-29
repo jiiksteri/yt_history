@@ -41,12 +41,16 @@ Place your client id and client secret where yt_history can find them:
 
 Start the server:
 
-    ./yt_history -p <listening_port> [ -v [ -v ] ... ]
+    ./yt_history  [ -n ] [ -p <listening_port> ] [ -v [ -v ] ... ]
 
 If you do not specify a port, one will be allocated for you. The
 listening address will be printed on the console.
 
-Passing -v increases verbosity.
+ * -v increases verbosity. Multiple -v:s more so
+
+ * -n disables https keep-alive. That is, we'll pass "Connection: close"
+   with our requests and thus do the whole SSL connection negotiation separately for
+   every request.
 
 Point your browser at localhost. Your browser will be redirected to
 Google for authorization. When the browser returns we show a somewhat
