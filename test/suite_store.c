@@ -36,6 +36,7 @@ static void test_session_count_overflow(void)
 		verbose(VERBOSE, "%s(): ensured %d (%p)\n", __func__, i, sessions[i]);
 	}
 
+	verbose(ERROR, "You should see an error message below:\n");
 	CU_ASSERT_EQUAL(ENOMEM, do_session_ensure(store, &sessions[i]));
 
 	for (i = 0; i < nel; i++) {
