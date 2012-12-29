@@ -72,7 +72,7 @@ struct request_ctx {
 
 	char *error;
 
-	enum { READ_STATUS, READ_HEADERS, READ_BODY, READ_DONE } read_state;
+	enum { READ_NONE, READ_STATUS, READ_HEADERS, READ_BODY, READ_DONE } read_state;
 
 	int status;
 	char *status_line;
@@ -158,6 +158,7 @@ static int read_chunk_size(struct request_ctx *req, struct bufferevent *bev)
 static const char *pretty_state(char *buf, size_t len, int state)
 {
 	switch (state) {
+	case READ_NONE: snprintf(buf, len, "READ_NONE"); break;
 	case READ_STATUS: snprintf(buf, len, "READ_STATUS"); break;
 	case READ_HEADERS: snprintf(buf, len, "READ_HEADERS"); break;
 	case READ_BODY: snprintf(buf, len, "READ_BODY"); break;
@@ -298,6 +299,10 @@ static void cb_read(struct bufferevent *bev, void *arg)
 	struct request_ctx *req = arg;
 	char *line;
 	size_t n;
+
+	if (req->read_state == READ_NONE) {
+		req->read_state = READ_STATUS;
+	}
 
 	while (req->read_state == READ_STATUS || req->read_state == READ_HEADERS) {
 
