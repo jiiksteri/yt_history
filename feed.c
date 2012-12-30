@@ -367,12 +367,10 @@ void feed_destroy(struct feed *feed)
 static const char *HEADER =
 	"<html>\n"
 	"<head>\n"
-	"  <link href='http://fonts.googleapis.com/css?family=Coda2'"
-	" rel='stylesheet' type='text/css' />"
 	"  <style>\n"
 	"    body {"
 	"      background-color: #666666;"
-	"      font-family: Coda2, sans-serif;"
+	"      font-family: sans-serif;"
 	"      font-size: 16px;"
 	"      margin-top: 20px;"
 	"    }\n"
