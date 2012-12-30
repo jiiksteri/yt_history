@@ -83,7 +83,7 @@ struct request_ctx {
 	int consumed;
 
 	int chunked;
-	size_t chunk_size;
+	ssize_t chunk_size;
 	size_t chunk_left;
 
 	struct conn_stash *conn_stash;
