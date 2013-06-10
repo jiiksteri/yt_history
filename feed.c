@@ -233,7 +233,7 @@ static char *amp_to_amp(char *to, size_t sz, const char *from)
 {
 	int ind = 0;
 
-	while (*from && ind < sz) {
+	while (from && *from && ind < sz) {
 		if (*from == '&') {
 			to[ind++] = '&';
 			to[ind++] = 'a';
