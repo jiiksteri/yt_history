@@ -20,7 +20,7 @@ LDFLAGS = $(shell pkg-config --libs libevent_openssl libssl json expat)
 
 all: $(PROG)
 $(PROG): $(OBJS)
-	$(CC) $(LDFLAGS) -o $@ $(OBJS)
+	$(CC) -o $@ $(OBJS) $(LDFLAGS) 
 
 clean:
 	$(RM) $(PROG) $(OBJS)
