@@ -115,6 +115,27 @@ static void parse_status(struct request_ctx *req, const char *line, size_t len)
 		verbose(ERROR, "%s(): Invalid status line '%s'\n", __func__, line);
 	} else {
 		req->status = atoi(&line[i+1]);
+		if (req->status != 200) {
+			/*
+			 * A bit of a kludge to handle the NoLinkedYoutubeAccount
+			 * case; If we're logged in to a G+ account, for example,
+			 * that's not linked to a youtube account, the youtube
+			 * history page tells us "401 NoLinkedYouTubeAccount", so
+			 * we'd better just show that instead of a boring blank
+			 * page.
+			 *
+			 * Of course we could handle that specific status and that
+			 * specific message but let's just consider anything != 200
+			 * as an error we propagate to the browser, and see how well
+			 * that works out.
+			 */
+			while (line[++i]) {
+				if (line[i] == ' ') {
+					req->error = strdup(&line[i+1]);
+					break;
+				}
+			}
+		}
 	}
 }
 
