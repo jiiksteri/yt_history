@@ -194,13 +194,28 @@ int main(int argc, char **argv)
 
 	store_destroy(app.store);
 
-	evsignal_del(app.interrupt_event);
-	event_free(app.interrupt_event);
+	if (app.interrupt_event != NULL) {
+		evsignal_del(app.interrupt_event);
+		event_free(app.interrupt_event);
+		app.interrupt_event = NULL;
+	}
 
 	auth_destroy(app.auth);
-	https_engine_destroy(app.https);
-	evhttp_free(app.http);
-	event_base_free(app.base);
+
+	if (app.https != NULL) {
+		https_engine_destroy(app.https);
+		app.https = NULL;
+	}
+
+	if (app.http != NULL) {
+		evhttp_free(app.http);
+		app.http = NULL;
+	}
+
+	if (app.base != NULL) {
+		event_base_free(app.base);
+		app.base = NULL;
+	}
 
 	return err;
 
